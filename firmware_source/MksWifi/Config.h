@@ -4,9 +4,12 @@
 #define CONFIG_H_INCLUDED
 
 
+#define DEBUG_OUTPUT_SERIAL0    0
+#define DEBUG_OUTPUT_TELNET     1
 
 //#define SPI_DEBUG
 #define SHOW_PASSWORDS
+#define ESP_DEBUG_FEATURE DEBUG_OUTPUT_SERIAL0
 
 // Define the maximum length (bytes) of file upload data per SPI packet. Use a multiple of the SD card file or cluster size for efficiency.
 // ************ This must be kept in step with the corresponding value in RepRapFirmwareWiFi *************

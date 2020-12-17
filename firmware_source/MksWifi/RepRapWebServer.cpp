@@ -137,7 +137,7 @@ void RepRapWebServer::serveStatic(const char* uri, FS& fs, const char* path, con
 }
 
 void RepRapWebServer::handleClient() {
-	
+    
   if (_currentStatus == HC_NONE) {
     WiFiClient client = _server.available();
   if (!client) {
@@ -327,7 +327,7 @@ void RepRapWebServer::sendContent(const uint8_t *content, size_t dataLength)
     char * chunkSize = (char *)malloc(11);
     if(chunkSize){
       sprintf(chunkSize, "%x%s", len, footer);
-      _currentClient.write((const uint8_t *)chunkSize, strlen(chunkSize), false);
+      _currentClient.write((const uint8_t *)chunkSize, strlen(chunkSize));
       free(chunkSize);
     }
   }
@@ -354,11 +354,11 @@ void RepRapWebServer::sendContent_P(PGM_P content, size_t size)
     char * chunkSize = (char *)malloc(11);
     if(chunkSize){
       sprintf(chunkSize, "%x%s", size, footer);
-      _currentClient.write((const uint8_t *)chunkSize, strlen(chunkSize), false);
+      _currentClient.write((const uint8_t *)chunkSize, strlen(chunkSize));
       free(chunkSize);
     }
   }
-  _currentClient.write_P(content, size, false);
+  _currentClient.write_P(content, size);
   if(_chunked){
     _currentClient.write(footer, 2);
   }

@@ -27,7 +27,6 @@
 #undef DEBUG
 #define DEBUG_OUTPUT Serial
 
-#include "HSPI.h"
 
 #define UNUSED(_x)  (void)(_x)
 
@@ -95,16 +94,16 @@ bool RepRapWebServer::_parseRequest(WiFiClient& client, uint32_t &postLength)
   //attach handler
   RequestHandler* handler;
   for (handler = _firstHandler; handler; handler = handler->next()) {
-//  	DEBUG_OUTPUT.print("Method: ");
-//	DEBUG_OUTPUT.println(_currentMethod);
+//      DEBUG_OUTPUT.print("Method: ");
+//  DEBUG_OUTPUT.println(_currentMethod);
     if (handler->canHandle(_currentMethod, _currentUri))
     {
      #ifdef DEBUG
-	  DEBUG_OUTPUT.print("_currentMethod: ");
-	 DEBUG_OUTPUT.println(_currentMethod);
-	   DEBUG_OUTPUT.print("_currentUri: ");
-	 DEBUG_OUTPUT.println(_currentUri);
-	#endif
+      DEBUG_OUTPUT.print("_currentMethod: ");
+     DEBUG_OUTPUT.println(_currentMethod);
+       DEBUG_OUTPUT.print("_currentUri: ");
+     DEBUG_OUTPUT.println(_currentUri);
+    #endif
       break;
     }
   }
@@ -132,14 +131,14 @@ bool RepRapWebServer::_parseRequest(WiFiClient& client, uint32_t &postLength)
       headerValue = req.substring(headerDiv + 1);
       headerValue.trim();
        _collectHeader(headerName.c_str(),headerValue.c_str());
-	  
+      
 #ifdef DEBUG
-	  DEBUG_OUTPUT.print("headerName: ");
-	  DEBUG_OUTPUT.println(headerName);
-	  DEBUG_OUTPUT.print("headerValue: ");
-	  DEBUG_OUTPUT.println(headerValue);
+      DEBUG_OUTPUT.print("headerName: ");
+      DEBUG_OUTPUT.println(headerName);
+      DEBUG_OUTPUT.print("headerValue: ");
+      DEBUG_OUTPUT.println(headerValue);
 #endif
-	  
+      
       if (headerName == "Content-Type"){
         if (headerValue.startsWith("text/plain")){
           isForm = false;
@@ -197,33 +196,33 @@ bool RepRapWebServer::_parseRequest(WiFiClient& client, uint32_t &postLength)
     String headerName;
     String headerValue;
     //parse headers
-	while(1)
-	{
-		req = client.readStringUntil('\r');
-		client.readStringUntil('\n');
-		if (req == "") break;//no more headers
-		int headerDiv = req.indexOf(':');
-		if (headerDiv == -1)
-		{
-			break;
-		}
-	      headerName = req.substring(0, headerDiv);
-	      headerValue = req.substring(headerDiv + 2);
-	      _collectHeader(headerName.c_str(),headerValue.c_str());
-		  
+    while(1)
+    {
+        req = client.readStringUntil('\r');
+        client.readStringUntil('\n');
+        if (req == "") break;//no more headers
+        int headerDiv = req.indexOf(':');
+        if (headerDiv == -1)
+        {
+            break;
+        }
+          headerName = req.substring(0, headerDiv);
+          headerValue = req.substring(headerDiv + 2);
+          _collectHeader(headerName.c_str(),headerValue.c_str());
+          
 #ifdef DEBUG
-		  DEBUG_OUTPUT.print("headerName: ");
-		  DEBUG_OUTPUT.println(headerName);
-		  DEBUG_OUTPUT.print("headerValue: ");
-		  DEBUG_OUTPUT.println(headerValue);
+          DEBUG_OUTPUT.print("headerName: ");
+          DEBUG_OUTPUT.println(headerName);
+          DEBUG_OUTPUT.print("headerValue: ");
+          DEBUG_OUTPUT.println(headerValue);
 #endif
-		  
-		if (headerName == "Host")
-		{
-			 _hostHeader = headerValue;
-		}
-    	}
-    	_parseArguments(searchStr);
+          
+        if (headerName == "Host")
+        {
+             _hostHeader = headerValue;
+        }
+        }
+        _parseArguments(searchStr);
   }
   client.flush();
 
@@ -323,7 +322,7 @@ void RepRapWebServer::_parseArguments(String data) {
     }
     RequestArgument& arg = _currentArgs[iarg];
     arg.key = data.substring(pos, equal_sign_index);
-	arg.value = urlDecode(data.substring(equal_sign_index + 1, next_arg_index));
+    arg.value = urlDecode(data.substring(equal_sign_index + 1, next_arg_index));
 #ifdef DEBUG
     DEBUG_OUTPUT.print("arg ");
     DEBUG_OUTPUT.print(iarg);
@@ -577,33 +576,33 @@ readfile:
 
 String RepRapWebServer::urlDecode(const String& text)
 {
-	String decoded = "";
-	char temp[] = "0x00";
-	unsigned int len = text.length();
-	unsigned int i = 0;
-	while (i < len)
-	{
-		char decodedChar;
-		char encodedChar = text.charAt(i++);
-		if ((encodedChar == '%') && (i + 1 < len))
-		{
-			temp[2] = text.charAt(i++);
-			temp[3] = text.charAt(i++);
+    String decoded = "";
+    char temp[] = "0x00";
+    unsigned int len = text.length();
+    unsigned int i = 0;
+    while (i < len)
+    {
+        char decodedChar;
+        char encodedChar = text.charAt(i++);
+        if ((encodedChar == '%') && (i + 1 < len))
+        {
+            temp[2] = text.charAt(i++);
+            temp[3] = text.charAt(i++);
 
-			decodedChar = strtol(temp, NULL, 16);
-		}
-		else {
-			if (encodedChar == '+')
-			{
-				decodedChar = ' ';
-			}
-			else {
-				decodedChar = encodedChar;  // normal ascii char
-			}
-		}
-		decoded += decodedChar;
-	}
-	return decoded;
+            decodedChar = strtol(temp, NULL, 16);
+        }
+        else {
+            if (encodedChar == '+')
+            {
+                decodedChar = ' ';
+            }
+            else {
+                decodedChar = encodedChar;  // normal ascii char
+            }
+        }
+        decoded += decodedChar;
+    }
+    return decoded;
 }
 
 bool RepRapWebServer::_parseFormUploadAborted(){
