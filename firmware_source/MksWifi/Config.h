@@ -1,11 +1,9 @@
-// Configuration for MksWiFi
+// Configuration for MksWiFi Firmware
 
 #ifndef CONFIG_H_INCLUDED
 #define CONFIG_H_INCLUDED
-
-//Defines
-#define DEBUG_OUTPUT_SERIAL0    0
-#define DEBUG_OUTPUT_TELNET     1
+#include "defines.h"
+#include "debug_esp3d.h"
 
 //DEBUG
 //#define ESP_DEBUG_FEATURE DEBUG_OUTPUT_TELNET

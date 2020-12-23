@@ -20,17 +20,14 @@
   Modified 8 May 2015 by Hristo Gochkov (proper post and file upload handling)
 */
 
-
-#include <Arduino.h>
 #include <libb64/cencode.h>
-#include "WiFiServer.h"
-#include "WiFiClient.h"
+#include <WiFiServer.h>
+#include <WiFiClient.h>
+#include <FS.h>
+#include <LittleFS.h>
+#include "Config.h"
 #include "RepRapWebServer.h"
-#include "FS.h"
 #include "RequestHandlersImpl.h"
-#undef DEBUG
-#define DEBUG_OUTPUT Serial
-
 
 RepRapWebServer::RepRapWebServer(IPAddress addr, int port)
 : _server(addr, port)
@@ -143,10 +140,7 @@ void RepRapWebServer::handleClient() {
   if (!client) {
     return;
   }
-
-#ifdef DEBUG
-  DEBUG_OUTPUT.println("New client");
-#endif
+    log_esp3d("New client");
 
     _currentClient = client;
     _currentStatus = HC_WAIT_READ;
@@ -453,17 +447,14 @@ void RepRapWebServer::onNotFound(THandlerFunction fn) {
 void RepRapWebServer::_handleRequest() {
   bool handled = false;
   if (!_currentHandler){
-#ifdef DEBUG
-    DEBUG_OUTPUT.println("request handler not found");
-#endif
+    log_esp3d("request handler not found");
   }
   else {
     handled = _currentHandler->handle(*this, _currentMethod, _currentUri);
-#ifdef DEBUG
     if (!handled) {
-      DEBUG_OUTPUT.println("request handler failed to handle request");
+      log_esp3d("request handler failed to handle request");
     }
-#endif
+
   }
 
   if (!handled) {

@@ -155,14 +155,12 @@ bool RepRapWebServer::_parseRequest(WiFiClient& client, uint32_t &postLength)
 
     if (!isForm)
     {
-#if 1   // DC42
       if (_servingPrinter && method == HTTP_POST && contentLength != 0)
       {
         postLength = contentLength;     // tell caller that there is postdata to read
         _parseArguments(searchStr);
         return true;
       }
-#endif
       //some clients send headers first and data after (like we do)
       //give them a chance
       int tries = 100;//100ms max wait

@@ -1,19 +1,16 @@
-#include <Arduino.h>
 #include <WiFiClient.h>
 #include <WiFiServer.h>
 #include <WiFiUdp.h>
+#include "Config.h"
 #include "RepRapWebServer.h"
-
 #include "MksHTTPUpdateServer.h"
 
-#if 1
 const char* MksHTTPUpdateServer::_serverIndex =
 R"(<html><body><form method='POST' action='update_web' enctype='multipart/form-data'>
                   <input type='file' name='update'>
                   <input type='submit' value='Update'>
                </form>
          </body></html>)";
-#endif
 const char* MksHTTPUpdateServer::_failedResponse = R"(Update failed!)";
 const char* MksHTTPUpdateServer::_successResponse = "<META http-equiv=\"refresh\" content=\"15;URL=\">Update successfully! Rebooting...";
 
@@ -27,8 +24,6 @@ MksHTTPUpdateServer::MksHTTPUpdateServer(bool serial_debug)
   _password = NULL;
   _authenticated = false;
 }
-extern "C" uint32_t _SPIFFS_start;
-extern "C" uint32_t _SPIFFS_end;
 
 char update_wifi_firmware[] = "update_wifi_firmware";
 
@@ -50,14 +45,12 @@ void MksHTTPUpdateServer::setup(RepRapWebServer *server,  const char * username,
     _server = server;
     _username = (char *)username;
     _password = (char *)password;
-#if 1
     // handler for the /update form page
     _server->onPrefix("/update_web", HTTP_GET, [&](){
     //  if(_username != NULL && _password != NULL && !_server->authenticate(_username, _password))
      //   return _server->requestAuthentication();
       _server->send(200, "text/html", _serverIndex);
     });
-#endif
 
     // handler for the /update form POST (once file upload finishes)
     _server->onPrefix("/update_", HTTP_POST, [&](){
@@ -87,27 +80,16 @@ void MksHTTPUpdateServer::setup(RepRapWebServer *server,  const char * username,
           // handler for the file upload, get's the sketch bytes, and writes
           // them through the Update object
           HTTPUpload& upload = _server->upload();
-    
-        //Serial.printf("_SPIFFS_start: 0x%x\n", _SPIFFS_start);
-        // Serial.printf("_SPIFFS_end: 0x%x\n", _SPIFFS_end);
           if(upload.status == UPLOAD_FILE_START)
         {
             if (_serial_output)
                 Serial.setDebugOutput(true);
-
-            /*     _authenticated = (_username == NULL || _password == NULL || _server->authenticate(_username, _password));
-            if(!_authenticated){
-            if (_serial_output)
-            Serial.printf("Unauthenticated Update\n");
-            return;
-            }*/
-
             if((!upload.filename.startsWith("MksWifi.bin")) 
                 && (!upload.filename.startsWith("MksWifi_Web.bin"))  
                 && (!upload.filename.startsWith("MksWifi_WebView.bin")))
             {
                 Update_result = UPDATE_FILE_ERROR;
-                upload.status == UPLOAD_FILE_ABORTED;
+                upload.status = UPLOAD_FILE_ABORTED;
             
                 return;
             }
@@ -119,18 +101,9 @@ void MksHTTPUpdateServer::setup(RepRapWebServer *server,  const char * username,
             uint32_t maxSketchSpace;    
 
             String uri = _server->uri();
-        //  Serial.printf("Uri: %s\n", uri.c_str());
+            log_esp3d("Uri: %s\n", uri.c_str());
 
             bool res = false;
-
-            
-            
-            /*if(hidden_ssid[0] != 0)
-            {
-                memset(ssid, 0, sizeof(ssid));
-                memcpy(ssid, hidden_ssid, sizeof(hidden_ssid));
-            }*/
-            
             
             if(uri.startsWith("/update_sketch") )
             {
@@ -138,24 +111,24 @@ void MksHTTPUpdateServer::setup(RepRapWebServer *server,  const char * username,
                 if(upload.filename.startsWith("MksWifi.bin") || upload.filename.startsWith("MksWifi_Web.bin"))
                 {
                     maxSketchSpace = (ESP.getFreeSketchSpace() - 0x1000) & 0xFFFFF000;
-                //  Serial.printf("maxSketchSpace: 0x%x\n", maxSketchSpace);
+                    log_esp3d("maxSketchSpace: 0x%x\n", maxSketchSpace);
                     res = Update.begin(maxSketchSpace);
                 }
                 else
                 {
                     Update_result = UPDATE_FILE_ERROR;
-                    upload.status == UPLOAD_FILE_ABORTED;
+                    upload.status = UPLOAD_FILE_ABORTED;
                     return;
                 }
             }
-            else if(uri.startsWith("/update_spiffs") ||uri.startsWith("/update_web") )
+            else if(uri.startsWith("/update_fs") ||uri.startsWith("/update_web") )
             {   
                 if(upload.filename.startsWith("MksWifi_WebView.bin"))
                     res = Update.begin(3 * 1024 * 1024, U_FS);
                 else
                 {
                     Update_result = UPDATE_FILE_ERROR;
-                    upload.status == UPLOAD_FILE_ABORTED;
+                    upload.status = UPLOAD_FILE_ABORTED;
                     
                     
                     return;
@@ -164,7 +137,7 @@ void MksHTTPUpdateServer::setup(RepRapWebServer *server,  const char * username,
             else
             {
                 Update_result = UPDATE_COMM_ERROR;
-                upload.status == UPLOAD_FILE_ABORTED;
+                upload.status = UPLOAD_FILE_ABORTED;
                 return;
             }
 

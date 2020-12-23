@@ -3,12 +3,12 @@
 #include "MksHTTPUpdateServer.h"
 #include <EEPROM.h>
 #include <FS.h>
+#include <LittleFS.h>
 #include <ESP8266HTTPClient.h>
 #include "PooledStrings.cpp"
 #include <WiFiUdp.h>
 #include "Config.h"
 #include "gcode.h"
-#include "debug_esp3d.h" 
 
 
 //define
@@ -357,7 +357,7 @@ void net_env_prepare()
 
     if(verification_flag)
     {
-        SPIFFS.begin();
+        LittleFS.begin();
         server.onNotFound(fsHandler);
     }
     
@@ -389,14 +389,6 @@ void reply_search_handler()
      
       if (packetSize)
       {
-        IPAddress remote = node_monitor.remoteIP();
-        for (int i = 0; i < 4; i++)
-        {
-          if (i < 3)
-          {
-           
-          }
-        }
         // read the packet into packetBufffer
         node_monitor.read(packetBuffer, sizeof(packetBuffer));
 
@@ -500,7 +492,6 @@ void query_printer_inf()
     {       
         
         if((gPrinterInf.print_state == PRINTER_PRINTING) || (gPrinterInf.print_state == PRINTER_PAUSE))
-        //if(!printFinishFlag)
         {
             if(millis() - last_query_temp_time > 5000) //every 5 seconds
             {
@@ -623,18 +614,10 @@ void loop()
             if (tcp.hasClient()){
                 for(i = 0; i < MAX_SRV_CLIENTS; i++){
                   //find free/disconnected spot
-                #if 0
-                  if (!serverClients[i] || !serverClients[i].connected()){
-                    if(serverClients[i]) serverClients[i].stop();
-                    serverClients[i] = tcp.available();
-                    continue;
-                  }
-                  #else
                   if(serverClients[i].connected()) 
                   {
                     serverClients[i].stop();
                   }
-                  #endif
                   serverClients[i] = tcp.available();
                 }
                 if (tcp.hasClient())
@@ -671,27 +654,6 @@ void loop()
                             
                         readStr[readSize] = 0;
                         
-
-                        
-                        //transfer file
-                        #if 0
-                        if(strstr((const char *)readStr, "M29") != 0)
-                        {
-                            if(!verification_flag)
-                            {
-                                break;
-                            }
-                            if(transfer_state != TRANSFER_IDLE)
-                            {
-                                rcv_end_flag = true;
-                                net_print((const uint8_t *) "ok\n", strlen((const char *)"ok\n"));
-                                break;
-                            }
-                        }
-                        #endif
-                        
-                    
-                        
                         if(transfer_file_flag)
                         {
                         
@@ -718,33 +680,6 @@ void loop()
                                 int j = 0;
                                 char cmd_line[100] = {0};
                                 String gcodeM3 = "";
-                            
-                            #if 0
-                                if(transfer_state == TRANSFER_BEGIN)
-                                {
-                                    if(strstr((const char *)readStr, "M110") != 0)
-                                    {
-
-                                        file_fragment = 0;
-                                        rcv_end_flag = false;
-                                        transfer_file_flag = true;
-
-                                        if(package_file_first(filePath) == 0)
-                                        {
-                                            /*transfer_state = TRANSFER_READY;
-                                            digitalWrite(EspReqTransferPin, LOW);*/
-                                        }
-                                        else
-                                        {
-                                            transfer_file_flag = false;
-                                            transfer_state = TRANSFER_IDLE;
-                                        }
-                                        net_print((const uint8_t *) "ok\n", strlen((const char *)"ok\n"));
-                                        break;
-                                    }
-                                }
-
-                            #endif
                                 
                                 init_queue(&cmd_queue);
                                 
@@ -786,36 +721,6 @@ void loop()
                                 }
                                 while(pop_queue(&cmd_queue, cmd_line, sizeof(cmd_line)) >= 0)       
                                 {
-                                #if 0
-                                    point = strstr((const char *)cmd_line, "M28 ");
-                                    if(point != 0)                      
-                                    {
-                                        if((strstr((const char *)cmd_line, ".g") || strstr((const char *)cmd_line, ".G")))
-                                        {
-                                            int index = 0;
-                                            char *fileName;
-                                            
-                                            point += 3;
-                                            while(*(point + index) == ' ')
-                                                index++;
-                                            
-                                            memcpy((char *)filePath, (const char *)(point + index), readSize - (int)(point + index - (int)(&cmd_line[0])));
-                                            
-                                            gFileFifo.reset();
-
-                                            transfer_frags = 0;
-
-                                                                        
-                                            transfer_state = TRANSFER_BEGIN;
-
-                                            sprintf((char *)dbgStr, "Writing to file:%s\n", (char *)filePath);
-                                            
-                                            net_print((const uint8_t *)dbgStr, strlen((const char *)dbgStr));
-                                        }
-                                        
-                                    }
-                                    else
-                                #endif
                                     {
                                         /*transfer gcode*/
                                         if((strchr((const char *)cmd_line, 'G') != 0) 
@@ -2374,7 +2279,7 @@ uint8_t refreshApWeb()
     wifiConfigHtml = F("<html><head><meta http-equiv='Content-Type' content='text/html;'><title>MKS WIFI</title><style>body{background: #b5ff6a;}.config{margin: 150px auto;width: 600px;height: 600px;overflow: hidden;</style></head>");
     wifiConfigHtml += F("<body><div class='config'></caption><br /><h2>Update</h2>");
     wifiConfigHtml += F("<form method='POST' action='update_sketch' enctype='multipart/form-data'><table border='0'><tr><td>wifi firmware:</td><td><input type='file' name='update' ></td><td><input type='submit' value='update'></td></tr></form>");
-    wifiConfigHtml += F("<form method='POST' action='update_spiffs' enctype='multipart/form-data'><tr><td>web view:</td><td><input type='file' name='update' ></td><td><input type='submit' value='update'></td></tr></table></form>");
+    wifiConfigHtml += F("<form method='POST' action='update_fs' enctype='multipart/form-data'><tr><td>web view:</td><td><input type='file' name='update' ></td><td><input type='submit' value='update'></td></tr></table></form>");
     wifiConfigHtml += F("<br /><br /><h2>WIFI Configuration</h2><form method='GET' action='update_cfg'><caption><input type='radio' id='wifi_mode_sta' name='wifi_mode' value='wifi_mode_sta' /><label for='wifi_mode_sta'>STA</label><br />");
     wifiConfigHtml += F("<input type='radio' id='wifi_mode_ap' name='wifi_mode' value='wifi_mode_ap' /><label for='wifi_mode_ap'>AP</label><br /><br /><table border='0'><tr><td>");
     wifiConfigHtml += F("WIFI: </td><td><input type='text' id='hidden_ssid' name='hidden_ssid' /></td></tr><tr><td>KEY: </td><td><input type='"); 
@@ -2400,14 +2305,12 @@ void onWifiConfig()
     server.on("/update_sketch", HTTP_GET, []() {
         server.send(200, FPSTR(STR_MIME_TEXT_HTML), wifiConfigHtml);
     });
-    server.on("/update_spiffs", HTTP_GET, []() {
+    server.on("/update_fs", HTTP_GET, []() {
         server.send(200, FPSTR(STR_MIME_TEXT_HTML), wifiConfigHtml);
     });
 
  
     server.on("/update_cfg", HTTP_GET, []() {
-        //Serial.printf("on http post\n");
-
         if (server.args() <= 0) 
         {
             server.send(500, FPSTR(STR_MIME_TEXT_PLAIN), F("Got no data, go back and retry"));
@@ -2416,18 +2319,12 @@ void onWifiConfig()
         for (uint8_t e = 0; e < server.args(); e++) {
             String argument = server.arg(e);
             urldecode(argument);
-            if (server.argName(e) == "password") argument.toCharArray(pass, 64);//pass = server.arg(e);
-            else if (server.argName(e) == "ssid") argument.toCharArray(ssid, 32);//ssid = server.arg(e);
-            else if (server.argName(e) == "hidden_ssid") argument.toCharArray(hidden_ssid, 32);//ssid = server.arg(e);
-            else if (server.argName(e) == "wifi_mode") argument.toCharArray(wifi_mode, 15);//ssid = server.arg(e);
-            //else if (server.argName(e) == "webhostname") argument.toCharArray(webhostname, 64);
+            if (server.argName(e) == "password") argument.toCharArray(pass, 64);
+            else if (server.argName(e) == "ssid") argument.toCharArray(ssid, 32);
+            else if (server.argName(e) == "hidden_ssid") argument.toCharArray(hidden_ssid, 32);
+            else if (server.argName(e) == "wifi_mode") argument.toCharArray(wifi_mode, 15);
         }
-        
-        /*if(hidden_ssid[0] != 0)
-        {
-            memset(ssid, 0, sizeof(ssid));
-            memcpy(ssid, hidden_ssid, sizeof(hidden_ssid));
-        }*/
+
         if(strlen((const char *)hidden_ssid) <= 0)
         {
             server.send(200, FPSTR(STR_MIME_TEXT_HTML), F("<p>wifi parameters error!</p>"));
@@ -2444,8 +2341,6 @@ void onWifiConfig()
             memcpy(ssid, hidden_ssid, sizeof(hidden_ssid));
         }
         
-        //Serial.printf("on http post:ready eeprom\n");
-    
         char valid[1] = {0x0a};
         
         EEPROM.put(BAK_ADDRESS_WIFI_SSID, ssid);
@@ -2460,13 +2355,9 @@ void onWifiConfig()
         manual_valid = 0xff;
 
         EEPROM.commit();
-    
 
-        //Serial.printf("on http post:ready send to client\n");
         server.send(200, FPSTR(STR_MIME_TEXT_HTML), F("<p>Configure successfully!<br />Please use the new ip to connect again.</p>"));
     
-        
-        //Serial.printf("on http post:after commit\n");
         delay(300);
         ESP.restart();
     });
@@ -2485,8 +2376,6 @@ void StartAccessPoint()
     macStr.replace(":", "");
     strcat(softApName, macStr.substring(8).c_str());
     WiFi.softAP(softApName);
-//  dns.setErrorReplyCode(DNSReplyCode::NoError);
-//  dns.start(53, "*", apIP);
 
     onWifiConfig();
     
@@ -2502,9 +2391,6 @@ static void extract_file_item_cloud(File dataFile, String fileStr)
 {
 //Todo
 }
-#if 1
-
-//篓娄????隆颅???篓娄???2鈧??隆庐篓娄??篓篓隆矛????篓娄篓C?篓篓隆陋隆毛?1a?隆矛???隆颅???篓娄???隆陋-?隆盲?篓娄?篓C?隆庐???-GET??隆掳????鈧∶????
 void fsHandler()
 {
     String path = server.uri();
@@ -2513,23 +2399,16 @@ void fsHandler()
     {
         return;
     }
-    
-    #if 0
-    if (path.endsWith("/"))
-    {
-        path += F("reprap.htm");            // default to reprap.htm as the index page
-    }
-    
-    #endif
+
     bool addedGz = false;
-    File dataFile = SPIFFS.open(path, "r");
+    File dataFile = LittleFS.open(path, "r");
 
     if (!dataFile && !path.endsWith(".gz") && path.length() <= 29)
     {
         // Requested file not found and wasn't a zipped file, so see if we have a zipped version
         path += F(".gz");
         addedGz = true;
-        dataFile = SPIFFS.open(path, "r");
+        dataFile = LittleFS.open(path, "r");
     }
     if (!dataFile)
     {
@@ -2551,48 +2430,6 @@ void fsHandler()
     dataFile.close();
 
 }
-#endif
-#if 0
-// Handle a rr_ request from the client
-void handleGcode() 
-{
-    uint32_t now;
- uint32_t timeout;
-
-  uint32_t postLength = server.getPostLength();
-  String uri = server.uri();
-
-
-  if(uri != NULL)
-  {
-    //Serial.println("handle1");
-    //gcode
-    if(server.hasArg((const char *)"gcode"))
-    {
-        if((!transfer_file_flag) && (transfer_state == TRANSFER_IDLE))
-        {
-            String gcodeStr = server.arg((const char *)"gcode");
-            package_gcode(gcodeStr);
-            transfer_state = TRANSFER_READY;
-            digitalWrite(EspReqTransferPin, LOW);
-            
-            server.send(200, FPSTR(STR_MIME_APPLICATION_JSON), FPSTR(STR_JSON_ERR_0));  
-        }
-        else
-        {
-            server.send(500, FPSTR(STR_MIME_APPLICATION_JSON), FPSTR(STR_JSON_ERR_500_IS_BUSY));    
-        }
-    
-
-    
-      }
-  
-         
-  }
-
-}
-#endif
-
 
 void handleUpload()
 {
@@ -2780,1018 +2617,10 @@ void handleUpload()
 
 }
 
-#if 0
-void handleConfig()
-{
-    uint32_t postLength = server.getPostLength();
-    String uri = server.uri();
-    char cfg_ssid[32];
-    char cfg_pass[64];
-    char cfg_wifi_mode[] = "wifi_mode_sta";
-    
-      if(uri != NULL)
-      {
-        
-        for (uint8_t e = 0; e < server.args(); e++) {
-            String argument = server.arg(e);
-            urldecode(argument);
-            if (server.argName(e) == "key") argument.toCharArray(cfg_pass, 64);//pass = server.arg(e);
-            else if (server.argName(e) == "ssid") argument.toCharArray(cfg_ssid, 32);//ssid = server.arg(e);
-            else if (server.argName(e) == "mode") argument.toCharArray(cfg_wifi_mode, 15);//ssid = server.arg(e);
-            //else if (server.argName(e) == "webhostname") argument.toCharArray(webhostname, 64);
-        }
-        
-        //Serial.printf("mode: %s\nssid: %s\nkey: %s\n", wifi_mode, ssid, pass);                
 
-        char valid[1] = {0x0a};
-        
-        EEPROM.put(BAK_ADDRESS_WIFI_SSID, cfg_ssid);
-        EEPROM.put(BAK_ADDRESS_WIFI_KEY, cfg_pass);
-        
-        EEPROM.put(BAK_ADDRESS_WIFI_MODE, cfg_wifi_mode);
-
-        EEPROM.put(BAK_ADDRESS_WIFI_VALID, valid);
-        
-        server.send(200, FPSTR(STR_MIME_TEXT_HTML), F("<h1>All set!</h1><br /><p>(Reboot.)</p>"));
-    
-        EEPROM.commit();
-        delay(300);
-        ESP.restart();
-        
-    
-        
-     }    
-             
-}
-
-void handleApiPrinter() 
-{
-    StaticJsonBuffer<600> jsonBuffer;
-    StaticJsonBuffer<600> jsonFlagsBuffer;
-    JsonObject& state = jsonFlagsBuffer.createObject();
-    JsonObject& flags = jsonFlagsBuffer.createObject();
-    JsonObject& temp = jsonFlagsBuffer.createObject();
-    JsonObject& bed = jsonFlagsBuffer.createObject();
-    JsonObject& tool0 = jsonFlagsBuffer.createObject();
-    JsonObject& tool1 = jsonFlagsBuffer.createObject();
-
-    if(gPrinterInf.print_state == PRINTER_NOT_CONNECT)
-    {
-        flags["operational"] = false;
-        flags["paused"] = false;
-        flags["printing"] = false;
-        flags["error"] = true;
-        flags["ready"] = false;
-        flags["sdReady"] = false;
-
-        state["text"] = "Not connected";        
-    }   
-    else if(gPrinterInf.print_state == PRINTER_IDLE)
-    {
-        flags["operational"] = true;
-        flags["paused"] = false;
-        flags["printing"] = false;
-        flags["error"] = false;
-        flags["ready"] = true;
-        flags["sdReady"] = false;
-
-        
-        state["text"] = "Operational";      
-    }
-    else if(gPrinterInf.print_state == PRINTER_PRINTING)
-    {
-        flags["operational"] = true;
-        flags["paused"] = false;
-        flags["printing"] = true;
-        flags["error"] = false;
-        flags["ready"] = true;
-        flags["sdReady"] = false;
-
-        
-        state["text"] = "Printing";     
-    }
-    else if(gPrinterInf.print_state == PRINTER_PAUSE)
-    {
-        flags["operational"] = true;
-        flags["paused"] = true;
-        flags["printing"] = false;
-        flags["error"] = false;
-        flags["ready"] = true;
-        flags["sdReady"] = false;
-
-        
-        state["text"] = "Pause";        
-    }
-    state["flags"] = flags;
-
-
-    bed["actual"] = gPrinterInf.curBedTemp;
-    bed["target"] = gPrinterInf.desireBedTemp;
-    bed["offset"] = 0;
-
-    tool0["actual"] = gPrinterInf.curSprayerTemp[0];
-    tool0["target"] = gPrinterInf.desireSprayerTemp[0];
-    tool0["offset"] = 0;
-
-    tool1["actual"] = gPrinterInf.curSprayerTemp[1];
-    tool1["target"] = gPrinterInf.desireSprayerTemp[1];
-    tool1["offset"] = 0;
-
-    temp["bed"] = bed;
-    temp["tool0"] = tool0;
-    temp["tool1"] = tool1;  
-
-    
-    JsonObject& root = jsonBuffer.createObject();
-    root["state"] = state;
-    root["temperature"] = temp; 
-
-    
-    
-    memset(jsBuffer, 0, sizeof(jsBuffer));
-    
-    root.printTo(jsBuffer, sizeof(jsBuffer));
-    
-    server.send(200, FPSTR(STR_MIME_APPLICATION_JSON), FPSTR(jsBuffer));
-         
-    
-}
-
-void handleApiPrinterCtrl()
-{
-    
-    uint8_t readBuf[200] = {0};
-    String gcodeStr = "";
-    
-    StaticJsonBuffer<200> jsonBuffer;
-    uint32_t postLength = server.getPostLength();
-
-    if((postLength > sizeof(readBuf)) || (postLength <= 0))
-    {
-        server.send(400, FPSTR(STR_MIME_TEXT_PLAIN), FPSTR("Bad Request")); 
-        return;
-    }
-
-    if((!transfer_file_flag) && (transfer_state == TRANSFER_IDLE))
-    {
-        String gcodeStr = server.arg((const char *)"gcode");
-        package_gcode(gcodeStr);
-        transfer_state = TRANSFER_READY;
-        digitalWrite(EspReqTransferPin, LOW);
-        
-        server.readPostdata(server.client(), readBuf, postLength);
-            
-        JsonObject& root = jsonBuffer.parseObject((char *)readBuf);
-        if (!root.success())
-        {
-            server.send(400, FPSTR(STR_MIME_TEXT_PLAIN), FPSTR("Bad Request")); 
-            return;
-        }
-        
-        const char* cmd    = root["command"];
-        
-        if(strcmp(cmd, "jog") == 0)
-        {
-            gcodeStr.concat("G91\nG1");
-            
-            if (root.containsKey("x"))
-            {
-                float x  = root["x"];
-                gcodeStr.concat(" X");
-                gcodeStr.concat(x);
-            }
-            if (root.containsKey("y"))
-            {
-                float y  = root["y"];
-                gcodeStr.concat(" Y");
-                gcodeStr.concat(y);
-            
-            }
-            if (root.containsKey("z"))
-            {
-                float z  = root["z"];
-                gcodeStr.concat(" Z");
-                gcodeStr.concat(z);
-            
-            }
-            gcodeStr.concat("\nG90");
-            
-        }
-        else if(strcmp(cmd, "home") == 0)
-        {
-            if (root.containsKey("axes"))
-            {
-                JsonArray& nestedArray = root["axes"];
-                if(nestedArray.size() == 3)
-                    gcodeStr.concat("G28");
-                else
-                {
-                    for(int i = 0; i < nestedArray.size(); i++)
-                    {
-                        const char* axes = nestedArray[i];
-                        gcodeStr.concat("G28 ");
-                        if(strcmp(axes, "x") == 0)
-                        {
-                            gcodeStr.concat("X0");
-                        }
-                        else if(strcmp(axes, "y") == 0)
-                        {
-                            gcodeStr.concat("Y0");
-                        }
-                        else if(strcmp(axes, "z") == 0)
-                        {
-                            gcodeStr.concat("Z0");
-                        }
-                    }
-                }
-                
-            }
-        }
-        else
-        {
-            server.send(400, FPSTR(STR_MIME_TEXT_PLAIN), FPSTR("Bad Request")); 
-            return;
-        }
-        
-        gcodeStr.concat('\n');
-        package_gcode(gcodeStr);
-        transfer_state = TRANSFER_READY;
-        digitalWrite(EspReqTransferPin, LOW);
-
-        server.send(204, FPSTR(STR_MIME_TEXT_PLAIN), FPSTR("No Content"));  
-
-    }
-    else
-    {
-        server.send(409, FPSTR(STR_MIME_TEXT_PLAIN), FPSTR("409 Conflict"));    
-    }
-
-    
-
-}
-
-void handleApiToolRelative()
-{
-    uint8_t readBuf[200] = {0};
-    String gcodeStr = "";
-    
-    StaticJsonBuffer<200> jsonBuffer;
-    uint32_t postLength = server.getPostLength();
-
-    if((postLength > sizeof(readBuf)) || (postLength <= 0))
-    {
-        server.send(400, FPSTR(STR_MIME_TEXT_PLAIN), FPSTR("Bad Request")); 
-        return;
-    }
-    if((!transfer_file_flag) && (transfer_state == TRANSFER_IDLE))
-    {
-    
-        server.readPostdata(server.client(), readBuf, postLength);
-            
-        JsonObject& root = jsonBuffer.parseObject((char *)readBuf);
-        if (!root.success())
-        {
-            server.send(400, FPSTR(STR_MIME_TEXT_PLAIN), FPSTR("Bad Request")); 
-            return;
-        }
-        
-        const char* cmd    = root["command"];
-        
-        if(strcmp(cmd, "target") == 0)
-        {       
-            if (root.containsKey("targets"))
-            {
-                JsonObject& tg = root["targets"];
-                if (!tg.success())
-                {
-                    server.send(400, FPSTR(STR_MIME_TEXT_PLAIN), FPSTR("Bad Request")); 
-                    return;
-                }
-                if(tg.containsKey("tool0"))
-                {
-                    float temp = tg["tool0"];
-                    gcodeStr.concat("M104 T0 S");
-                    gcodeStr.concat(temp);
-                    gcodeStr.concat('\n');
-                }
-                if(tg.containsKey("tool1"))
-                {
-                    float temp = tg["tool1"];
-                    gcodeStr.concat("M104 T1 S");
-                    gcodeStr.concat(temp);
-                    gcodeStr.concat('\n');
-                }
-                
-                
-            }
-            else
-            {
-                server.send(400, FPSTR(STR_MIME_TEXT_PLAIN), FPSTR("Bad Request")); 
-                return;
-            }
-        }
-        else if(strcmp(cmd, "select") == 0)
-        {
-            if (root.containsKey("tool"))
-            {
-                const char *_tool = root["tool"];
-                if(strcmp(_tool, "tool0") == 0)
-                {
-                    gcodeStr.concat("T0");
-                }
-                else if(strcmp(_tool, "tool1") == 0)
-                {
-                    gcodeStr.concat("T1");
-                }
-                else
-                {
-                    server.send(400, FPSTR(STR_MIME_TEXT_PLAIN), FPSTR("Bad Request")); 
-                    return;
-                }
-            }
-        }
-        else if(strcmp(cmd, "extrude") == 0)
-        {
-            if (root.containsKey("amount"))
-            {
-                float amount = root["amount"];
-                gcodeStr.concat("G91\nG1 E");
-                gcodeStr.concat(amount);
-                gcodeStr.concat(" F300\nG90\n");
-            }
-            else
-            {
-                server.send(400, FPSTR(STR_MIME_TEXT_PLAIN), FPSTR("Bad Request")); 
-                return;
-            }
-            
-        }
-        else  if(strcmp(cmd, "flowrate") == 0)
-        {
-            if (root.containsKey("factor"))
-            {
-                int fac = root["factor"];
-                gcodeStr.concat("M221 S");
-                gcodeStr.concat(fac);
-            }
-            else
-            {
-                server.send(400, FPSTR(STR_MIME_TEXT_PLAIN), FPSTR("Bad Request")); 
-                return;
-            }
-        }
-        else
-        {
-            server.send(400, FPSTR(STR_MIME_TEXT_PLAIN), FPSTR("Bad Request")); 
-            return;
-        }
-            
-        gcodeStr.concat('\n');
-        package_gcode(gcodeStr);
-        transfer_state = TRANSFER_READY;
-        digitalWrite(EspReqTransferPin, LOW);
-
-        server.send(204, FPSTR(STR_MIME_TEXT_PLAIN), FPSTR("No Content"));  
-    }
-    else
-    {
-        server.send(409, FPSTR(STR_MIME_TEXT_PLAIN), FPSTR("409 Conflict"));    
-    }
-        
-}
-
-void handleApiBedRelative()
-{
-    uint8_t readBuf[200] = {0};
-    String gcodeStr = "";
-    
-    StaticJsonBuffer<200> jsonBuffer;
-    uint32_t postLength = server.getPostLength();
-
-    if((postLength > sizeof(readBuf)) || (postLength <= 0))
-    {
-        server.send(400, FPSTR(STR_MIME_TEXT_PLAIN), FPSTR("Bad Request")); 
-        return;
-    }
-
-    if((!transfer_file_flag) && (transfer_state == TRANSFER_IDLE))
-    {
-        server.readPostdata(server.client(), readBuf, postLength);
-            
-        JsonObject& root = jsonBuffer.parseObject((char *)readBuf);
-        if (!root.success())
-        {
-            server.send(400, FPSTR(STR_MIME_TEXT_PLAIN), FPSTR("Bad Request")); 
-            return;
-        }
-        
-        const char* cmd    = root["command"];
-        
-        if(strcmp(cmd, "target") == 0)
-        {       
-            if (root.containsKey("targets"))
-            {
-                float temp = root["targets"];
-                gcodeStr.concat("M140 S");
-                gcodeStr.concat(temp);          
-            }
-            else
-            {
-                server.send(400, FPSTR(STR_MIME_TEXT_PLAIN), FPSTR("Bad Request")); 
-                return;
-            }
-        }
-        else
-        {
-            server.send(400, FPSTR(STR_MIME_TEXT_PLAIN), FPSTR("Bad Request")); 
-            return;
-        }
-        gcodeStr.concat('\n');
-        package_gcode(gcodeStr);
-        transfer_state = TRANSFER_READY;
-        digitalWrite(EspReqTransferPin, LOW);
-
-        server.send(204, FPSTR(STR_MIME_TEXT_PLAIN), FPSTR("No Content"));  
-    }
-    else
-    {
-        server.send(409, FPSTR(STR_MIME_TEXT_PLAIN), FPSTR("409 Conflict"));    
-    }
-}
-
-void handleApiSendCmd()
-{
-    uint8_t readBuf[200] = {0};
-    String gcodeStr = "";
-    
-    StaticJsonBuffer<200> jsonBuffer;
-    uint32_t postLength = server.getPostLength();
-
-    if((postLength > sizeof(readBuf)) || (postLength <= 0))
-    {
-        server.send(400, FPSTR(STR_MIME_TEXT_PLAIN), FPSTR("Bad Request")); 
-        return;
-    }
-
-    if((!transfer_file_flag) && (transfer_state == TRANSFER_IDLE))
-    {
-        server.readPostdata(server.client(), readBuf, postLength);
-            
-        JsonObject& root = jsonBuffer.parseObject((char *)readBuf);
-        if (!root.success())
-        {
-            server.send(400, FPSTR(STR_MIME_TEXT_PLAIN), FPSTR("Bad Request")); 
-            return;
-        }
-        
-        const char* cmd    = root["command"];
-        
-        gcodeStr.concat(cmd);
-        gcodeStr.concat("\n");
-        package_gcode(gcodeStr);
-        transfer_state = TRANSFER_READY;
-        digitalWrite(EspReqTransferPin, LOW);
-        
-        server.send(204, FPSTR(STR_MIME_TEXT_PLAIN), FPSTR("No Content"));  
-    }
-    else
-    {
-        server.send(409, FPSTR(STR_MIME_TEXT_PLAIN), FPSTR("409 Conflict"));    
-    }
-}
-
-void handleApiChooseFileToPrint()
-{
-    uint8_t readBuf[200] = {0};
-    String gcodeStr = "";
-    
-    StaticJsonBuffer<200> jsonBuffer;
-    uint32_t postLength = server.getPostLength();
-
-    String uri = server.uri();
-
-    if(uri == NULL)
-    {
-        server.send(400, FPSTR(STR_MIME_TEXT_PLAIN), FPSTR("Bad Request")); 
-        return;
-    }
-
-
-    if((postLength > sizeof(readBuf)) || (postLength <= 0))
-    {
-        server.send(400, FPSTR(STR_MIME_TEXT_PLAIN), FPSTR("Bad Request")); 
-        return;
-    }
-
-    if((!transfer_file_flag) && (transfer_state == TRANSFER_IDLE))
-    {
-        server.readPostdata(server.client(), readBuf, postLength);
-            
-        JsonObject& root = jsonBuffer.parseObject((char *)readBuf);
-        if (!root.success())
-        {
-            server.send(400, FPSTR(STR_MIME_TEXT_PLAIN), FPSTR("Bad Request")); 
-            return;
-        }
-        
-        const char* cmd    = root["command"];
-
-        if(strcmp(cmd, "select") == 0)
-        {       
-            
-            gcodeStr.concat("M23 ");
-            String vol = uri.substring(strlen("/api/files/"), uri.indexOf("/", strlen("/api/files/") + 1) + 1);
-
-        /*  if(vol.startsWith("sd"))
-            {
-                gcodeStr.concat("1:");
-            }
-            else if(vol.startsWith("udisk"))
-            {
-                gcodeStr.concat("0:");
-            }
-            */
-            if((!vol.startsWith("sd")) && (!vol.startsWith("udisk")))
-            {
-                server.send(400, FPSTR(STR_MIME_TEXT_PLAIN), FPSTR("Bad Request")); 
-                return;
-            }
-            String file1 = uri.substring(strlen("/api/files/") + vol.length());
-            
-            gcodeStr.concat(file1);
-                
-        
-            if (root.containsKey("print"))
-            {
-                bool print = root["print"];
-                if(print)
-                {
-                    gcodeStr.concat("\nM24");   
-
-                    gPrinterInf.print_file_inf.file_name = "";
-                    gPrinterInf.print_file_inf.file_size = 0;
-                    gPrinterInf.print_file_inf.print_rate = 0;
-                    gPrinterInf.print_file_inf.print_hours = 0;
-                    gPrinterInf.print_file_inf.print_mins = 0;
-                    gPrinterInf.print_file_inf.print_seconds = 0;
-
-                    printFinishFlag = false;
-
-                    gPrinterInf.print_state = PRINTER_PRINTING;
-                    
-                }
-            }
-        }
-        else
-        {
-            server.send(400, FPSTR(STR_MIME_TEXT_PLAIN), FPSTR("Bad Request")); 
-            return;
-        }       
-
-        gcodeStr.concat("\n");
-        package_gcode(gcodeStr);
-        transfer_state = TRANSFER_READY;
-        digitalWrite(EspReqTransferPin, LOW);
-
-        server.send(200, FPSTR(STR_MIME_TEXT_PLAIN), FPSTR("OK"));
-    }
-    else
-    {
-        server.send(409, FPSTR(STR_MIME_TEXT_PLAIN), FPSTR("409 Conflict"));    
-    }
-
-}
-
-
-    
-
-
-
-
-void handleApiFileList()
-{
-    String uri = server.uri();
-    String path;
-    String gcodeStr;
-    File dataFile;
-
-    char *head_end;
-
-    if(uri == NULL)
-    {
-        server.send(404, FPSTR(STR_MIME_TEXT_PLAIN), FPSTR("Not Found"));   
-        return;
-    }
-
-#if 1
-    /*if(uri.startsWith("/api/files/local"))
-    {
-        path = uri.substring(strlen("/api/files/local"), uri.indexOf("/", strlen("/api/files/local") + 1));
-        
-    }
-    else */if(uri.startsWith("/api/files/sdcard"))
-    {
-        path = uri.substring(strlen("/api/files/sdcard"));
-        //gcodeStr = "M998 1\nM20 1:" + path;
-        gcodeStr = "M20 1:" + path;
-    }
-/*  else if(uri.startsWith("/api/files/udisk"))
-    {
-        path = uri.substring(strlen("/api/files/udisk"), uri.indexOf("/", strlen("/api/files/udisk") + 1));
-        gcodeStr = "M998 0\nM20 0:" + path;
-    }*/
-    else
-    {
-        server.send(404, FPSTR(STR_MIME_TEXT_PLAIN), FPSTR("Not Found"));   
-        return;
-    }
-    
-    getting_file_flag = true;
-    
-    gcodeStr.concat("\n");
-    package_gcode(gcodeStr);
-    transfer_state = TRANSFER_READY;
-    digitalWrite(EspReqTransferPin, LOW);
-
-    
-
-    uint8_t save_in_file = 0;
-    
-    int now = millis();
-
-    int item_num = 0;
-    
-    do
-    {
-        
-        
-        do_transfer();
-
-        int len = get_printer_reply();
-        
-        if(len > 0)
-        {
-            esp_data_parser((char *)uart_rcv_package, len);
-        
-            uart_rcv_index = 0;
-        }
-
-
-        if((save_in_file) || (gPrinterInf.sd_file_list.length() > LIST_MIN_LEN_SAVE_FILE))
-        {
-            if((save_in_file == 0))
-            {
-                dataFile = SPIFFS.open(F("/list_tree.txt"), "w+");
-                head_end = "{\"files\":[";
-                dataFile.write((const uint8_t *)head_end, strlen((const char *)head_end));
-
-                save_in_file = 1;
-            }
-
-            if(gPrinterInf.sd_file_list.length() > 2)
-            {
-                String file1;
-                if(gPrinterInf.sd_file_list.indexOf('\n') == -1)
-                {
-                    file1 = gPrinterInf.sd_file_list;
-                }
-                else
-                {
-                    file1 = gPrinterInf.sd_file_list.substring(0,gPrinterInf.sd_file_list.indexOf('\n'));
-                }
-
-        
-                extract_file_item(dataFile, file1);
-
-                if(dataFile.position() > LIST_MAX_LEN_SAVE_FILE)
-                {
-                    break;
-                }
-
-                dataFile.write(',');
-                
-
-                gPrinterInf.sd_file_list = gPrinterInf.sd_file_list.substring(file1.length() + 1);
-            }
-            
-        }
-
-        if(!getting_file_flag)
-        {
-            if(save_in_file)
-            {
-                if(gPrinterInf.sd_file_list.length() > 2)
-                    continue;
-                dataFile.seek(-1, SeekCur); // ','
-            }
-            if(gPrinterInf.sd_file_list.length() > LIST_MIN_LEN_SAVE_FILE)
-            {
-                continue;
-            }
-                
-            break;
-        }
-
-        yield();
-
-        
-    } while(millis() - now < 8000); //8s timeout
-
-    if(millis() - now >= 8000)
-    {
-        server.send(404, FPSTR(STR_MIME_TEXT_PLAIN), FPSTR("Not Found"));   
-        return;
-    }
-#endif
-
-    if(save_in_file)
-    {
-        head_end = "],\"free\":\"10M\"}";
-        dataFile.write((const uint8_t *)head_end, strlen((const char *)head_end));
-
-        dataFile.seek(0, SeekSet);
-        server.streamFile(dataFile, FPSTR(STR_MIME_APPLICATION_JSON));
-        
-        dataFile.close();
-
-        gPrinterInf.sd_file_list.remove(0, gPrinterInf.sd_file_list.length());
-    }
-    else
-    {
-        String list = gPrinterInf.sd_file_list;
-        while(list.indexOf('\n') != -1)
-        {
-            item_num++;
-            list = list.substring(list.indexOf('\n') + 1);
-        }
-        const size_t bufferSize = JSON_ARRAY_SIZE(item_num) + (item_num + 1) * JSON_OBJECT_SIZE(2) + gPrinterInf.sd_file_list.length() + strlen("name") * item_num + strlen("typefile") * item_num + 3 * (item_num + 2) + strlen("files") + strlen("free10M") - item_num;
-/*
-        Serial.print("item_num:");
-        Serial.println(item_num);
-        Serial.print("strLen:");
-        Serial.println(gPrinterInf.sd_file_list.length());
-        Serial.print("bufferSize:");
-        Serial.println(bufferSize);
-    */
-        DynamicJsonBuffer rootJsonBuffer(bufferSize);
-        //StaticJsonBuffer<1024> rootJsonBuffer;
-
-
-        JsonObject& root = rootJsonBuffer.createObject();
-        JsonArray& files = root.createNestedArray("files");
-        root["free"] = "10M";
-        
-        if(gPrinterInf.sd_file_list.length() > LIST_MIN_LEN_SAVE_FILE)
-        {
-            gPrinterInf.sd_file_list.remove(LIST_MIN_LEN_SAVE_FILE, gPrinterInf.sd_file_list.length() - LIST_MIN_LEN_SAVE_FILE);
-        }
-
-        
-
-        while(gPrinterInf.sd_file_list.length() > 2)
-        {
-            if(gPrinterInf.sd_file_list.indexOf('\n') == -1)
-            {
-                file1 = gPrinterInf.sd_file_list;
-            }
-            else
-            {
-                file1 = gPrinterInf.sd_file_list.substring(0,gPrinterInf.sd_file_list.indexOf('\n'));
-            }
-
-            JsonObject& item = rootJsonBuffer.createObject();
-            item["name"] = file1;
-            
-
-            if(file1.endsWith(".DIR"))
-            {
-                item["type"] = "dir";
-            }
-            else
-            {
-                item["type"] = "file";
-            }
-            files.add(item);
-
-            gPrinterInf.sd_file_list = gPrinterInf.sd_file_list.substring(file1.length() + 1);
-
-
-
-            yield();
-        //  optimistic_yield(10000);
-        }
-
-        memset(jsBuffer, 0, sizeof(jsBuffer));
-        
-        root.printTo(jsBuffer, sizeof(jsBuffer));
-
-        server.send(200, FPSTR(STR_MIME_APPLICATION_JSON), FPSTR(jsBuffer));
-    }
-    
-
-    
- // 
-}
-
-void handleApiPrint()
-{
-    uint8_t readBuf[200] = {0};
-    String gcodeStr = "";
-    
-    StaticJsonBuffer<200> jsonBuffer;
-    uint32_t postLength = server.getPostLength();
-
-    
-    if((postLength > sizeof(readBuf)) || (postLength <= 0))
-    {
-        server.send(400, FPSTR(STR_MIME_TEXT_PLAIN), FPSTR("Bad Request")); 
-        return;
-    }
-
-    if((!transfer_file_flag) && (transfer_state == TRANSFER_IDLE))
-    {
-        server.readPostdata(server.client(), readBuf, postLength);
-            
-        JsonObject& root = jsonBuffer.parseObject((char *)readBuf);
-        if (!root.success())
-        {
-            server.send(400, FPSTR(STR_MIME_TEXT_PLAIN), FPSTR("Bad Request")); 
-            return;
-        }
-
-        if (!root.containsKey("command"))
-        {
-            server.send(400, FPSTR(STR_MIME_TEXT_PLAIN), FPSTR("Bad Request")); 
-            return;
-        }
-        
-        const char* cmd    = root["command"];
-        
-        
-        if(strcmp(cmd, "cancel") == 0)
-        {
-            gcodeStr.concat("M26");
-        }
-        else if(strcmp(cmd, "pause") == 0)
-        {       
-            if (!root.containsKey("action"))
-            {
-                server.send(400, FPSTR(STR_MIME_TEXT_PLAIN), FPSTR("Bad Request")); 
-                return;
-            }
-            const char* action    = root["action"];
-            if(strcmp(action, "pause") == 0)
-            {
-                gcodeStr.concat("M25");
-                gPrinterInf.print_state = PRINTER_PAUSE;
-            }
-            else if(strcmp(action, "resume") == 0)
-            {
-                gcodeStr.concat("M24");
-                gPrinterInf.print_state = PRINTER_PRINTING;
-            }
-            else
-            {
-                server.send(400, FPSTR(STR_MIME_TEXT_PLAIN), FPSTR("Bad Request")); 
-                return;
-            }
-                
-        }
-        else
-        {
-            server.send(400, FPSTR(STR_MIME_TEXT_PLAIN), FPSTR("Bad Request")); 
-            return;
-        }
-        
-        gcodeStr.concat("\n");
-        package_gcode(gcodeStr);
-        transfer_state = TRANSFER_READY;
-        digitalWrite(EspReqTransferPin, LOW);
-        
-        server.send(204, FPSTR(STR_MIME_TEXT_PLAIN), FPSTR("No Content"));  
-    }
-    else
-    {
-        server.send(409, FPSTR(STR_MIME_TEXT_PLAIN), FPSTR("409 Conflict"));    
-    }
-}
-
-void handleApiPrintInf()
-{
-
-    if((gPrinterInf.print_state == PRINTER_PRINTING) || (gPrinterInf.print_state == PRINTER_PAUSE))
-    {
-        StaticJsonBuffer<600> jsonBuffer;
-    
-        
-        JsonObject& job = jsonBuffer.createObject();
-        JsonObject& file = jsonBuffer.createObject();
-        JsonObject& progress = jsonBuffer.createObject();
-        
-        file["name"] = gPrinterInf.print_file_inf.file_name.c_str();
-        file["size"] = gPrinterInf.print_file_inf.file_size;
-
-        progress["printTime"] = gPrinterInf.print_file_inf.print_hours * 3600 + gPrinterInf.print_file_inf.print_mins * 60 + gPrinterInf.print_file_inf.print_seconds;
-        progress["filepos"] = gPrinterInf.print_file_inf.file_size * gPrinterInf.print_file_inf.print_rate;
-        progress["completion"] = (float)gPrinterInf.print_file_inf.print_rate / 100.0;
-
-        job["file"] = file;
-
-        JsonObject& root = jsonBuffer.createObject();
-        root["job"] = job;
-        root["progress"] = progress;
-        
-        memset(jsBuffer, 0, sizeof(jsBuffer));
-    
-        root.printTo(jsBuffer, sizeof(jsBuffer));
-
-        server.send(200, FPSTR(STR_MIME_APPLICATION_JSON), FPSTR(jsBuffer));
-
-        if(gPrinterInf.print_file_inf.print_rate >= 100)
-        {
-            printFinishFlag = true;
-        }
-        
-    }
-    else
-    {
-    //  server.send(409, FPSTR(STR_MIME_TEXT_PLAIN), FPSTR("409 Conflict"));    
-    }
-    
-}
-
-void handleApiLogs()
-{
-
-    StaticJsonBuffer<1024> jsonBuffer;
-    
-    JsonObject& root = jsonBuffer.createObject();
-    JsonObject& logs = jsonBuffer.createObject();
-    JsonArray& tx = logs.createNestedArray("tx");
-    JsonArray& rx = logs.createNestedArray("rx");
-    
-
-    int ind = monitor_tx_buf.indexOf('\n');
-    while(1)
-    {
-        if(ind != -1)
-        {
-            tx.add(monitor_tx_buf.substring(0, ind));
-            monitor_tx_buf.remove(0, ind + 1);
-             ind = monitor_tx_buf.indexOf('\n');
-        }
-        else 
-            break;
-    }
-
-    ind = monitor_rx_buf.indexOf('\n');
-    while(1)
-    {
-        if(ind != -1)
-        {
-            rx.add(monitor_rx_buf.substring(0, ind));
-            monitor_rx_buf.remove(0, ind + 1);
-             ind = monitor_rx_buf.indexOf('\n');
-        }
-        else 
-            break;
-    }
-
-
-    root["logs"] = logs;
-
-    memset(jsBuffer, 0, sizeof(jsBuffer));
-    
-    root.printTo(jsBuffer, sizeof(jsBuffer));
-    
-    server.send(200, FPSTR(STR_MIME_APPLICATION_JSON), FPSTR(jsBuffer));    
-
-}
-
-
-
-#endif
 void handleRrUpload() {
 }
 
-#if 0
-void rm_str_char(char *str, char del_char)
-{
-    char *p, *q;
-    
-    if(str == 0)
-        return;
-    
-    for(p = str, q = str; *p != '\0'; p++)
-    {
-        if(*p != del_char)
-        {
-            *q++=*p;
-        }
-    }
-    *q=*p;
-}
-#endif
 
 
 void cloud_down_file()
