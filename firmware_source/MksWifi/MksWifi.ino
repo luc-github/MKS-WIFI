@@ -8,17 +8,10 @@
 #include <WiFiUdp.h>
 #include "Config.h"
 #include "gcode.h"
-
 #include "debug_esp3d.h" 
 
 
 //define
-#ifdef SHOW_PASSWORDS
-# define PASSWORD_INPUT_TYPE  "\"text\""
-#else
-# define PASSWORD_INPUT_TYPE  "\"password\""
-#endif
-
 #define MAX_WIFI_FAIL 50
 #define MAX_SRV_CLIENTS     1
 #define QUEUE_MAX_NUM    10
@@ -1458,12 +1451,10 @@ void do_transfer()
             break;
             
         case TRANSFER_GET_FILE:
-            //if(Serial.baudRate() != 4500000)
             if(Serial.baudRate() != 1958400)
             {
                 Serial.flush();
-                Serial.begin(1958400);
-                // Serial.begin(4500000);
+                Serial.updateBaudRate(1958400);
             }
             
              
@@ -1547,7 +1538,7 @@ void do_transfer()
                     if(Serial.baudRate() != 115200)
                     {
                         Serial.flush();
-                         Serial.begin(115200);
+                         Serial.updateBaudRate(115200);
                     }
                     transfer_file_flag = false;
                     rcv_end_flag = false;
@@ -2380,40 +2371,19 @@ bool TryToConnect()
 
 uint8_t refreshApWeb()
 {
-    #if 0
-     uint8_t num_ssids = WiFi.scanNetworks();
-
-    
-    wifiConfigHtml = F("<html><body><h1>Select your WiFi network:</h1><br /><form method=\"POST\">");
-    for (uint8_t i = 0; i < num_ssids; i++) {
-     wifiConfigHtml += "<input type=\"radio\" id=\"" + WiFi.SSID(i) + "\"name=\"ssid\" value=\"" + WiFi.SSID(i) + "\" /><label for=\"" + WiFi.SSID(i) + "\">" + WiFi.SSID(i) + "</label><br />";
-    }
-    wifiConfigHtml += F("<label for=\"password\">WiFi Password:</label><input type=" PASSWORD_INPUT_TYPE " id=\"password\" name=\"password\" /><br />");
-    wifiConfigHtml += F("<p><label for=\"webhostname\">Duet host name: </label><input type=\"text\" id=\"webhostname\" name=\"webhostname\" value=\"mkswifi\" /><br />");
-    wifiConfigHtml += F("<i>(This would allow you to access your printer by name instead of IP address. I.e. http://mkswifi/)</i></p>");
-    wifiConfigHtml += F("<input type=\"submit\" value=\"Save and reboot\" /></form></body></html>");
-    #endif
-    #if 0
-    wifiConfigHtml = F("<html><head><meta http-equiv=\"Content-Type\" content=\"text/html;\"><title>MKS WIFI脜盲脰脙</title><style>body{background: #b5ff6a;}.config{margin: 150px auto;width: 600px;height: 600px;overflow: hidden;</style></head>");
-    //wifiConfigHtml += F("<body><div class=\"config\"><br /><form method=\"POST\"><caption><h1>MKS WIFI脜盲脰脙</h1></caption> <div>赂陆陆眉WIFI脕脨卤铆:</div>/>");
-    wifiConfigHtml += F("<body><div class=\"config\"><br /><form method=\"POST\" action='config' ><caption><h1>MKS WIFI</h1></caption> ");
-    /*
-    for (uint8_t i = 0; i < num_ssids; i++) {       
-        wifiConfigHtml += "<input type=\"radio\" id=\"" + WiFi.SSID(i) + "\"name=\"ssid\" value=\"" + WiFi.SSID(i) + "\" /><label for=\"" + WiFi.SSID(i) + "\">" + WiFi.SSID(i) + "</label><br />";
-    }*/
-    wifiConfigHtml += F("<br /><h2>赂眉脨脗鹿脤录镁</h2><form method='POST' action='update_sketch' enctype='multipart/form-data'><input type='file' name='update'><input type='submit' value='Update'></td></tr></table></form><br /><br/>");
-    wifiConfigHtml += F("<h2>脥酶脗莽脜盲脰脙</h2><input type=\"radio\" id=\"wifi_mode_sta\" name=\"wifi_mode\" value=\"wifi_mode_sta\" /><label for=\"wifi_mode_sta\">STA(脡猫脰脙脕卢陆脫碌陆脧脗脙忙wifi)</label><br /><input type=\"radio\" id=\"wifi_mode_ap\" name=\"wifi_mode\" value=\"wifi_mode_ap\" /><label for=\"wifi_mode_ap\">AP(脡猫脰脙脛拢驴茅脦陋脧脗脙忙脠脠碌茫)</label><br />");
-    
-
-    wifiConfigHtml += F("<br /><br /><table border='0'><tr><td><label for=\"password\">WIFI拢潞</label><input type=\"text\" id=\"hidden_ssid\" name=\"hidden_ssid\" /></td></tr><tr><td><label for=\"password\">脙脺脗毛拢潞</label>");wifiConfigHtml += F("<input type=\" PASSWORD_INPUT_TYPE \" id=\"password\" name=\"password\" /></td></tr><tr><td colspan=2 align=\"right\"> <input type=\"submit\" value=\"脡猫脰脙虏垄脰脴脝么\"></td></tr></table></form></div></div></body></html>");
-#endif
     wifiConfigHtml = F("<html><head><meta http-equiv='Content-Type' content='text/html;'><title>MKS WIFI</title><style>body{background: #b5ff6a;}.config{margin: 150px auto;width: 600px;height: 600px;overflow: hidden;</style></head>");
     wifiConfigHtml += F("<body><div class='config'></caption><br /><h2>Update</h2>");
     wifiConfigHtml += F("<form method='POST' action='update_sketch' enctype='multipart/form-data'><table border='0'><tr><td>wifi firmware:</td><td><input type='file' name='update' ></td><td><input type='submit' value='update'></td></tr></form>");
     wifiConfigHtml += F("<form method='POST' action='update_spiffs' enctype='multipart/form-data'><tr><td>web view:</td><td><input type='file' name='update' ></td><td><input type='submit' value='update'></td></tr></table></form>");
     wifiConfigHtml += F("<br /><br /><h2>WIFI Configuration</h2><form method='GET' action='update_cfg'><caption><input type='radio' id='wifi_mode_sta' name='wifi_mode' value='wifi_mode_sta' /><label for='wifi_mode_sta'>STA</label><br />");
     wifiConfigHtml += F("<input type='radio' id='wifi_mode_ap' name='wifi_mode' value='wifi_mode_ap' /><label for='wifi_mode_ap'>AP</label><br /><br /><table border='0'><tr><td>");
-    wifiConfigHtml += F("WIFI: </td><td><input type='text' id='hidden_ssid' name='hidden_ssid' /></td></tr><tr><td>KEY: </td><td><input type=' PASSWORD_INPUT_TYPE ' id='password' name='password' />");
+    wifiConfigHtml += F("WIFI: </td><td><input type='text' id='hidden_ssid' name='hidden_ssid' /></td></tr><tr><td>KEY: </td><td><input type='"); 
+#ifdef SHOW_PASSWORDS
+    wifiConfigHtml += F("text");
+#else
+    wifiConfigHtml += F("password");
+#endif
+    wifiConfigHtml += F("' id='password' name='password' />");
     wifiConfigHtml += F("</td></tr><tr><td colspan=2 align='right'> <input type='submit' value='config and reboot'></td></tr></table></form></div></body></html>");
     return 0;
 }
@@ -2575,8 +2545,6 @@ void fsHandler()
     else if ( path.endsWith(".png")) dataType = F("application/x-png");
     else if ( path.endsWith(".ico")) dataType = F("image/x-icon");
 
-
-    /*篓娄????隆矛???html篓娄????|??? */
     server.streamFile(dataFile, dataType);
 
 
@@ -2783,26 +2751,13 @@ void handleUpload()
         if(upload_success || rcv_end_flag )
         {
             server.send(200, FPSTR(STR_MIME_APPLICATION_JSON), FPSTR(STR_JSON_ERR_0));  
-        }
-        //if((millis() - now >= 10000) || upload_error)
-        else
+        }  else
         {
-            
-            //Serial.print("len:");
-            //Serial.println(gFileFifo.left() );
-            
-            //Serial.print("postLength:");
-            //Serial.println(postLength );
             if(Serial.baudRate() != 115200)
             {
                 Serial.flush();
                 Serial.begin(115200);
-                // Serial.begin(4500000);
-            }
-            
-            //Serial.println("timeout" );
-            
-            
+              }
             transfer_file_flag = false;
             rcv_end_flag = false;
             transfer_state = TRANSFER_IDLE;

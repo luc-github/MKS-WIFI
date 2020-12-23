@@ -22,12 +22,11 @@
 #define _DEBUG_ESP3D_H
 
 #include "Config.h"
-
-
-#if defined(ESP_DEBUG_FEATURE)
-extern const char * pathToFileName(const char * path);
 #undef log_esp3d
 #undef log_esp3dS
+#if defined(ESP_DEBUG_FEATURE)
+extern const char * pathToFileName(const char * path);
+
 //Serial
 #if ESP_DEBUG_FEATURE == DEBUG_OUTPUT_SERIAL0
 #define DEBUG_OUTPUT_SERIAL Serial
@@ -40,6 +39,8 @@ void TelnetDebug(const char* format, ...);
 #define log_esp3d(format, ...)TelnetDebug("[ESP3D][%s:%u] %s(): " format "\r\n", pathToFileName(__FILE__), __LINE__, __FUNCTION__, ##__VA_ARGS__)
 #define log_esp3dS(format, ...) TelnetDebug(format "\r\n", ##__VA_ARGS__)
 #endif //DEBUG_OUTPUT_TELNET 
-
+#else
+#define log_esp3d(format, ...)
+#define log_esp3dS(format, ...) 
 #endif //ESP_DEBUG_FEATURE
 #endif //_DEBUG_ESP3D_H 
