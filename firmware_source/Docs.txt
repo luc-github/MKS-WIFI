@@ -1,0 +1,11 @@
+* Baud rate is  115200 for communications
+* Baud rate is 1958400 for file transfert
+
+Handlers port 80
+/upload (ANY) to upload files
+/ (GET) root
+/update_sketch (GET)
+/update_spiffs (GET) => /update_fs
+/update_cfg (GET)
+
+TCP server port 8080

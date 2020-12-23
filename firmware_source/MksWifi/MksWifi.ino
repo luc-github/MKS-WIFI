@@ -1,11 +1,12 @@
 #include <ESP8266WiFi.h>
-#include "RepRapWebServer.h"
-#include "MksHTTPUpdateServer.h"
+#include <ESP8266WebServer.h>
+
 #include <EEPROM.h>
 #include <FS.h>
 #include <LittleFS.h>
 #include <ESP8266HTTPClient.h>
-#include "PooledStrings.cpp"
+#include "MksHTTPUpdateServer.h"
+#include "PooledStrings.h"
 #include <WiFiUdp.h>
 #include "Config.h"
 #include "gcode.h"
@@ -82,7 +83,7 @@ MksHTTPUpdateServer httpUpdater;
 int cloud_port = 12345;
 boolean cloud_enable_flag = false;
 int cloud_link_state = 0;
-RepRapWebServer server(80);
+ESP8266WebServer server(80);
 WiFiServer tcp(8080);
 WiFiClient cloud_client;
 String wifiConfigHtml;
@@ -177,7 +178,6 @@ void esp_data_parser(char *cmdRxBuf, int len);
 String fileUrlEncode(String str);
 String fileUrlEncode(char *array);
 void cloud_handler();
-void cloud_get_file_list();
 
 void fsHandler();
 void handleGcode();
@@ -191,7 +191,6 @@ void SendInfoToSam();
 bool TryToConnect();
 void onWifiConfig();
 
-void cloud_down_file(const char *url);
 
 //Class
  class FILE_FIFO
@@ -360,14 +359,11 @@ void net_env_prepare()
         LittleFS.begin();
         server.onNotFound(fsHandler);
     }
-    
-    
-    server.servePrinter(true);
 
     
     onWifiConfig();
 
-    server.onPrefix("/upload", HTTP_ANY, handleUpload, handleRrUpload);     
+    server.on("/upload", HTTP_ANY, handleUpload, handleRrUpload);     
     
 
     server.begin();
@@ -486,7 +482,6 @@ void net_print(const uint8_t *sbuf, uint32_t len)
 void query_printer_inf()
 {
     static int last_query_temp_time = 0;
-    static int last_query_file_time = 0;
 
     if((!transfer_file_flag) &&  (transfer_state == TRANSFER_IDLE))
     {       
@@ -584,8 +579,7 @@ int get_printer_reply()
 void loop()
 {
     int i;
-    #if 1
-    
+
     
     switch (currentState)
     {
@@ -864,8 +858,6 @@ void loop()
             {               
                 reply_search_handler();
             }
-            cloud_down_file();
-            cloud_get_file_list();
         }
         else
         {
@@ -873,7 +865,6 @@ void loop()
         }
     
     yield();
-    #endif
 
 }
 
@@ -2383,14 +2374,6 @@ void StartAccessPoint()
   server.begin();
 }
 
-static void extract_file_item(File dataFile, String fileStr)
-{
-//Todo
-}
-static void extract_file_item_cloud(File dataFile, String fileStr)
-{
-//Todo
-}
 void fsHandler()
 {
     String path = server.uri();
@@ -2433,8 +2416,8 @@ void fsHandler()
 
 void handleUpload()
 {
-
-
+//Luc TODO
+/*
   uint32_t now;
   uint8_t readBuf[1024];
 
@@ -2475,14 +2458,14 @@ void handleUpload()
         //digitalWrite(EspReqTransferPin, LOW);
         if(package_file_first((char *)FileName.c_str(), (int)postLength) == 0)
         {
-            /*transfer_state = TRANSFER_READY;
-            digitalWrite(EspReqTransferPin, LOW);*/
+            //transfer_state = TRANSFER_READY;
+            //digitalWrite(EspReqTransferPin, LOW);
         }
         else
         {
             transfer_file_flag = false;
         }
-        /*wait m3 reply for first frame*/
+        //wait m3 reply for first frame
         int wait_tick = 0;
         while(1)
         {
@@ -2614,29 +2597,11 @@ void handleUpload()
   }
 
   
-
+*/
 }
 
 
 void handleRrUpload() {
-}
-
-
-
-void cloud_down_file()
-{
-//Todo
-}
-
-
-void cloud_get_file_list()
-{
-//Todo
-}
-
-void cloud_handler()
-{
-//Todo
 }
 
 void urldecode(String &input) { // LAL ^_^

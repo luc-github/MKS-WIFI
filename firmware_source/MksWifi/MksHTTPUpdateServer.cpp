@@ -1,8 +1,9 @@
 #include <WiFiClient.h>
+#include <ESP8266WebServer.h>
 #include <WiFiServer.h>
 #include <WiFiUdp.h>
 #include "Config.h"
-#include "RepRapWebServer.h"
+
 #include "MksHTTPUpdateServer.h"
 
 const char* MksHTTPUpdateServer::_serverIndex =
@@ -16,9 +17,8 @@ const char* MksHTTPUpdateServer::_successResponse = "<META http-equiv=\"refresh\
 
 extern boolean transfer_file_flag;
 
-MksHTTPUpdateServer::MksHTTPUpdateServer(bool serial_debug)
+MksHTTPUpdateServer::MksHTTPUpdateServer()
 {
-  _serial_output = serial_debug;
   _server = NULL;
   _username = NULL;
   _password = NULL;
@@ -37,8 +37,7 @@ typedef enum
 
 UPDATE_RESULT Update_result = UPDATE_UNKNOW_ERROR;;
     
-//void ESP8266HTTPUpdateServer::setup(ESP8266WebServer *server, const char * path, const char * username, const char * password)
-void MksHTTPUpdateServer::setup(RepRapWebServer *server,  const char * username, const char * password)
+void MksHTTPUpdateServer::setup(ESP8266WebServer *server,  const char * username, const char * password)
 {
     
     
@@ -46,14 +45,14 @@ void MksHTTPUpdateServer::setup(RepRapWebServer *server,  const char * username,
     _username = (char *)username;
     _password = (char *)password;
     // handler for the /update form page
-    _server->onPrefix("/update_web", HTTP_GET, [&](){
+    _server->on("/update_web", HTTP_GET, [&](){
     //  if(_username != NULL && _password != NULL && !_server->authenticate(_username, _password))
      //   return _server->requestAuthentication();
       _server->send(200, "text/html", _serverIndex);
     });
 
     // handler for the /update form POST (once file upload finishes)
-    _server->onPrefix("/update_", HTTP_POST, [&](){
+    _server->on("/update_", HTTP_POST, [&](){
      /* if(!_authenticated)
         return _server->requestAuthentication();*/
         if(Update_result == UPDATE_UNKNOW_ERROR)
@@ -82,8 +81,6 @@ void MksHTTPUpdateServer::setup(RepRapWebServer *server,  const char * username,
           HTTPUpload& upload = _server->upload();
           if(upload.status == UPLOAD_FILE_START)
         {
-            if (_serial_output)
-                Serial.setDebugOutput(true);
             if((!upload.filename.startsWith("MksWifi.bin")) 
                 && (!upload.filename.startsWith("MksWifi_Web.bin"))  
                 && (!upload.filename.startsWith("MksWifi_WebView.bin")))
@@ -95,8 +92,7 @@ void MksHTTPUpdateServer::setup(RepRapWebServer *server,  const char * username,
             }
 
             WiFiUDP::stopAll();
-            if (_serial_output)
-                Serial.printf("Update: %s\n", upload.filename.c_str());
+            log_esp3d("Update: %s\n", upload.filename.c_str());
         
             uint32_t maxSketchSpace;    
 
@@ -147,20 +143,17 @@ void MksHTTPUpdateServer::setup(RepRapWebServer *server,  const char * username,
 
             if(!res)
             {//start with max available size
-                if (_serial_output) 
-                    Update.printError(Serial);
+                log_esp3d("Error starting update");
             }
             // _server->send(200, "text/html", "Please wait.  Updating......");
           } //else if(_authenticated && upload.status == UPLOAD_FILE_WRITE){
           else if(upload.status == UPLOAD_FILE_WRITE)
         {
-            if (_serial_output) 
-                Serial.printf(".");
+            log_esp3d(".");
         
             if(Update.write(upload.buf, upload.currentSize) != upload.currentSize)
             {
-                if (_serial_output) 
-                    Update.printError(Serial);
+                log_esp3d("Size error");
 
             }
           } //else if(_authenticated && upload.status == UPLOAD_FILE_END){
@@ -169,22 +162,14 @@ void MksHTTPUpdateServer::setup(RepRapWebServer *server,  const char * username,
             if(Update.end(true))
             { //true to set the size to the current progress
                 Update_result = UPDATE_SUCCESS;
-                if (_serial_output) 
-                    Serial.printf("Update Success: %u\nRebooting...\n", upload.totalSize);
+                log_esp3d("Update Success: %u\nRebooting...\n", upload.totalSize);
             } 
-            else 
-            {
-                if (_serial_output) 
-                    Update.printError(Serial);
-            }
-            if (_serial_output) 
-                Serial.setDebugOutput(false);
+            
         }// else if(_authenticated && upload.status == UPLOAD_FILE_ABORTED){
         else if( upload.status == UPLOAD_FILE_ABORTED)
         {
             Update.end();
-            if (_serial_output) 
-                Serial.println("Update was aborted");
+            log_esp3d("Update was aborted");
         }
           delay(0);
         });
