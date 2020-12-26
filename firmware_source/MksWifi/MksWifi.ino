@@ -1,37 +1,19 @@
 #include <ESP8266WiFi.h>
-#include <ESP8266WebServer.h>
-
-#include <EEPROM.h>
 #include <FS.h>
 #include <LittleFS.h>
 #include <ESP8266HTTPClient.h>
-#include "MksHTTPUpdateServer.h"
-#include "PooledStrings.h"
+#include "MksEEPROM.h"
+#include "MksHTTPServer.h"
 #include <WiFiUdp.h>
 #include "Config.h"
 #include "gcode.h"
-
 
 //define
 #define MAX_WIFI_FAIL 50
 #define MAX_SRV_CLIENTS     1
 #define QUEUE_MAX_NUM    10
 
-#define BAK_ADDRESS_WIFI_SSID           0
-#define BAK_ADDRESS_WIFI_KEY            (BAK_ADDRESS_WIFI_SSID + 32)
-#define BAK_ADDRESS_WEB_HOST            (BAK_ADDRESS_WIFI_KEY+64)
-#define BAK_ADDRESS_WIFI_MODE       (BAK_ADDRESS_WEB_HOST+64)
-#define BAK_ADDRESS_WIFI_VALID      (BAK_ADDRESS_WIFI_MODE + 16)
-#define BAK_ADDRESS_MODULE_ID       (BAK_ADDRESS_WIFI_VALID + 16)
-#define BAK_ADDRESS_RESERVE1        (BAK_ADDRESS_MODULE_ID + 32)
-#define BAK_ADDRESS_RESERVE2        (BAK_ADDRESS_RESERVE1 + 16)
-#define BAK_ADDRESS_RESERVE3        (BAK_ADDRESS_RESERVE2 + 96)
-#define BAK_ADDRESS_RESERVE4        (BAK_ADDRESS_RESERVE3 + 16)
-#define BAK_ADDRESS_MANUAL_IP_FLAG  (BAK_ADDRESS_RESERVE4 + 1)
-#define BAK_ADDRESS_MANUAL_IP           (BAK_ADDRESS_MANUAL_IP_FLAG + 1)
-#define BAK_ADDRESS_MANUAL_MASK     (BAK_ADDRESS_MANUAL_IP + 4)
-#define BAK_ADDRESS_MANUAL_GATEWAY  (BAK_ADDRESS_MANUAL_MASK + 4)
-#define BAK_ADDRESS_MANUAL_DNS      (BAK_ADDRESS_MANUAL_GATEWAY + 4)
+
 
 #define LIST_MIN_LEN_SAVE_FILE  100
 #define LIST_MAX_LEN_SAVE_FILE  (1024 * 100)
@@ -69,7 +51,7 @@ const char  firmwareVersion[] = "C1.0.4_201109_beta";
 //Variable
 char M3_TYPE = TFT28;
 boolean GET_VERSION_OK = false;
-char wifi_mode[14] = {0};
+char wifi_mode[15] = {0};
 char moduleId[21] = {0};
 char  softApName[96]={0};
 char softApKey[64] = {0};
@@ -79,14 +61,12 @@ char webhostname[64];
 uint8_t manual_valid = 0xff; //whether it use static ip
 uint32_t ip_static, subnet_static, gateway_staic, dns_static;
 
-MksHTTPUpdateServer httpUpdater;
 int cloud_port = 12345;
 boolean cloud_enable_flag = false;
 int cloud_link_state = 0;
-ESP8266WebServer server(80);
+
 WiFiServer tcp(8080);
 WiFiClient cloud_client;
-String wifiConfigHtml;
 volatile bool verification_flag = false;
 IPAddress apIP(192, 168, 4, 1);
 char filePath[100];
@@ -175,21 +155,13 @@ OperatingState currentState = OperatingState::Unknown;
 int package_file_first(char *fileName);
 int package_file_fragment(uint8_t *dataField, uint32_t fragLen, int32_t fragment);
 void esp_data_parser(char *cmdRxBuf, int len);
-String fileUrlEncode(String str);
-String fileUrlEncode(char *array);
-void cloud_handler();
 
-void fsHandler();
 void handleGcode();
-void handleRrUpload();
-void  handleUpload();
 
-void urldecode(String &input);
-void urlencode(String &input);
+
 void StartAccessPoint();
 void SendInfoToSam();
 bool TryToConnect();
-void onWifiConfig();
 
 
 //Class
@@ -351,31 +323,6 @@ bool smartConfig()
     }
 }
 
-void net_env_prepare()
-{
-
-    if(verification_flag)
-    {
-        LittleFS.begin();
-        server.onNotFound(fsHandler);
-    }
-
-    
-    onWifiConfig();
-
-    server.on("/upload", HTTP_ANY, handleUpload, handleRrUpload);     
-    
-
-    server.begin();
-    tcp.begin();
-
-    
-    
-    node_monitor.begin(UDP_PORT);
-
-    
-}
-
 void reply_search_handler()
 {
     char packetBuffer[200];
@@ -427,7 +374,16 @@ void var_init()
     gPrinterInf.print_state = PRINTER_NOT_CONNECT;
     strcpy( wifi_mode, "wifi_mode_sta");
     strcpy( softApName, "MKSWIFI");
+    String macStr= WiFi.macAddress();
+    strcat( softApName, &macStr[macStr.length()-5]);
     strcpy( moduleId, "12345");
+}
+
+void net_env_prepare()
+{   
+    WebServer.begin();
+    tcp.begin();
+    node_monitor.begin(UDP_PORT);
 }
 
 
@@ -436,10 +392,11 @@ void setup() {
     var_init();
     Serial.begin(115200);
     delay(20);
-    EEPROM.begin(512);  
+    EEPROM.begin(EEPROM_SIZE);  
+    LittleFS.begin();
     verification();
     String macStr= WiFi.macAddress();
-    log_esp3d("Setup Pins");
+    log_mkswifi("Setup Pins");
     pinMode(McuTfrReadyPin, INPUT);
     pinMode(EspReqTransferPin, OUTPUT);
     digitalWrite(EspReqTransferPin, HIGH);
@@ -447,21 +404,18 @@ void setup() {
     bool success = TryToConnect();
     if (success)
     {
-        log_esp3d("Success");
+        log_mkswifi("Success");
     } else
     {
-        log_esp3d("Start Access point");
+        log_mkswifi("Start Access point");
         StartAccessPoint();     
         currentState = OperatingState::AccessPoint;
     }
     package_net_para();
-    log_esp3d("Sending Net Frame");
+    log_mkswifi("Sending Net Frame");
     Serial.write(uart_send_package, uart_send_size);
     
-    
     net_env_prepare();   
-    
-    httpUpdater.setup(&server);
     delay(500);
 }
 
@@ -580,28 +534,9 @@ void loop()
 {
     int i;
 
-    
-    switch (currentState)
-    {
-        case OperatingState::Client:
-            server.handleClient();
-            if(verification_flag)
-            {
-                cloud_handler();
-            }
-            break;
-
-        case OperatingState::AccessPoint:
-            server.handleClient();
-            break;
-
-        default:
-            break;
+    if(currentState != OperatingState::Unknown) {
+        WebServer.handle();
     }
-
-
-    
-    
     
     //  if(transfer_state == TRANSFER_IDLE)
         {
@@ -876,19 +811,19 @@ int package_net_para()
     int wifi_name_len;
     int wifi_key_len;
     int host_len = strlen(CLOUD_HOST);
-    log_esp3d("Net Frame preparation");
-    log_esp3d("Clear buffer");
+    log_mkswifi("Net Frame preparation");
+    log_mkswifi("Clear buffer");
     memset(uart_send_package, 0, sizeof(uart_send_package));
-    log_esp3d("Set frame header");
+    log_mkswifi("Set frame header");
     uart_send_package[UART_PROTCL_HEAD_OFFSET] = UART_PROTCL_HEAD;
     uart_send_package[UART_PROTCL_TYPE_OFFSET] = UART_PROTCL_TYPE_NET;
 
     if(currentState == OperatingState::Client)
     {
-        log_esp3d("STA Mode");
+        log_mkswifi("STA Mode");
         if(WiFi.status() == WL_CONNECTED)
         {
-            log_esp3d("Connected : %s", WiFi.localIP().toString().c_str());
+            log_mkswifi("Connected : %s", WiFi.localIP().toString().c_str());
             uart_send_package[UART_PROTCL_DATA_OFFSET] = WiFi.localIP()[0];
             uart_send_package[UART_PROTCL_DATA_OFFSET + 1] = WiFi.localIP()[1];
             uart_send_package[UART_PROTCL_DATA_OFFSET + 2] = WiFi.localIP()[2];
@@ -897,7 +832,7 @@ int package_net_para()
         }
         else
         {
-            log_esp3d("Not Connected");
+            log_mkswifi("Not Connected");
             uart_send_package[UART_PROTCL_DATA_OFFSET] = 0;
             uart_send_package[UART_PROTCL_DATA_OFFSET + 1] = 0;
             uart_send_package[UART_PROTCL_DATA_OFFSET + 2] = 0;
@@ -922,7 +857,7 @@ int package_net_para()
     } 
     else if(currentState == OperatingState::AccessPoint)
     {
-        log_esp3d("AP Mode: %s", WiFi.softAPIP().toString().c_str());
+        log_mkswifi("AP Mode: %s", WiFi.softAPIP().toString().c_str());
         uart_send_package[UART_PROTCL_DATA_OFFSET] = WiFi.softAPIP()[0];
         uart_send_package[UART_PROTCL_DATA_OFFSET + 1] = WiFi.softAPIP()[1];
         uart_send_package[UART_PROTCL_DATA_OFFSET + 2] = WiFi.softAPIP()[2];
@@ -934,7 +869,7 @@ int package_net_para()
         
         wifi_name_len = strlen(softApName);
         wifi_key_len = strlen(softApKey);
-        log_esp3d("SSID (%d): %s, PWD (%d):%s",wifi_name_len,softApName, wifi_key_len,softApKey);
+        log_mkswifi("SSID (%d): %s, PWD (%d):%s",wifi_name_len,softApName, wifi_key_len,softApKey);
         uart_send_package[UART_PROTCL_DATA_OFFSET + 8] = wifi_name_len;
         strcpy(&uart_send_package[UART_PROTCL_DATA_OFFSET + 9], softApName);
         uart_send_package[UART_PROTCL_DATA_OFFSET + 9 + wifi_name_len] = wifi_key_len;
@@ -945,7 +880,7 @@ int package_net_para()
     
     if(cloud_enable_flag)
     {
-        log_esp3d("Cloud service is enabled");
+        log_mkswifi("Cloud service is enabled");
         if(cloud_link_state == 3)
             uart_send_package[UART_PROTCL_DATA_OFFSET + wifi_name_len + wifi_key_len + 10] =0x12;
         else if( (cloud_link_state == 1) || (cloud_link_state == 2))
@@ -955,12 +890,12 @@ int package_net_para()
     }
     else
     {
-        log_esp3d("Cloud service is disabled");
+        log_mkswifi("Cloud service is disabled");
         uart_send_package[UART_PROTCL_DATA_OFFSET + wifi_name_len + wifi_key_len + 10] =0x0;
     
     }
     
-    log_esp3d("Cloud Host (%d): %s, port: %d", host_len, CLOUD_HOST, cloud_port);
+    log_mkswifi("Cloud Host (%d): %s, port: %d", host_len, CLOUD_HOST, cloud_port);
     uart_send_package[UART_PROTCL_DATA_OFFSET + wifi_name_len + wifi_key_len + 11] = host_len;
     strcpy(&uart_send_package[UART_PROTCL_DATA_OFFSET + wifi_name_len + wifi_key_len + 12], CLOUD_HOST);
     uart_send_package[UART_PROTCL_DATA_OFFSET + wifi_name_len + wifi_key_len + host_len + 12] = cloud_port & 0xff;
@@ -968,26 +903,26 @@ int package_net_para()
 
     
     int id_len = strlen(moduleId);
-    log_esp3d("ModuleID (%d): %s", id_len, moduleId);
+    log_mkswifi("ModuleID (%d): %s", id_len, moduleId);
     uart_send_package[UART_PROTCL_DATA_OFFSET + wifi_name_len + wifi_key_len + host_len + 14]  = id_len;
     strcpy(&uart_send_package[UART_PROTCL_DATA_OFFSET + wifi_name_len + wifi_key_len + host_len + 15], moduleId);
         
     int ver_len = strlen((const char *)firmwareVersion);
-    log_esp3d("FW (%d): %s", ver_len, firmwareVersion);
+    log_mkswifi("FW (%d): %s", ver_len, firmwareVersion);
     uart_send_package[UART_PROTCL_DATA_OFFSET + wifi_name_len + wifi_key_len + host_len + id_len + 15]  = ver_len;
     strcpy(&uart_send_package[UART_PROTCL_DATA_OFFSET + wifi_name_len + wifi_key_len + host_len + id_len + 16], firmwareVersion);
         
     dataLen = wifi_name_len + wifi_key_len + host_len + id_len + ver_len + 16;
-    log_esp3d("Cloud service Port: %d", 8080);
+    log_mkswifi("Cloud service Port: %d", 8080);
     uart_send_package[UART_PROTCL_DATA_OFFSET + 4] = 8080 & 0xff;
     uart_send_package[UART_PROTCL_DATA_OFFSET + 5] = (8080 >> 8 )& 0xff;
 
     if(!verification_flag) {
             uart_send_package[UART_PROTCL_DATA_OFFSET + 6] = 0x0e;
-             log_esp3d("Exception state");
+             log_mkswifi("Exception state");
         }
 
-    log_esp3d("Data len: %d", dataLen);
+    log_mkswifi("Data len: %d", dataLen);
     uart_send_package[UART_PROTCL_DATALEN_OFFSET] = dataLen & 0xff;
     uart_send_package[UART_PROTCL_DATALEN_OFFSET + 1] = (dataLen >> 8 )& 0xff;
     
@@ -1061,10 +996,7 @@ int package_gcode(String gcodeStr, boolean important)
     
     if(dataLen + buffer_offset > 1019)
         return -1;
-    
-    //net_print((const uint8_t *)"dataField:", strlen("dataField:"));
-    //net_print((const uint8_t *)dataField, strlen(dataField));
-    //net_print((const uint8_t *)"\n", 1);
+    log_mkswifi("dataField:%s size:%d", dataField, strlen(dataField));
     if(important)
     {
         uart_send_package_important[UART_PROTCL_HEAD_OFFSET + buffer_offset] = UART_PROTCL_HEAD;
@@ -1100,7 +1032,7 @@ int package_gcode(String gcodeStr, boolean important)
     }
     else
     {
-        //net_print((const uint8_t *)"overflow", strlen("overflow"));
+        log_mkswifi("overflow");
     }
     
 
@@ -1124,18 +1056,7 @@ int package_gcode(char *dataField, boolean important)
     }
     if(dataLen + buffer_offset > 1019)
         return -1;
-    //net_print((const uint8_t *)"dataField:", strlen("dataField:"));
-    //net_print((const uint8_t *)dataField, strlen(dataField));
-    //net_print((const uint8_t *)"\n", 1);
-
-    /**(buffer_to_send + UART_PROTCL_HEAD_OFFSET + buffer_offset) = UART_PROTCL_HEAD;
-    *(buffer_to_send + UART_PROTCL_TYPE_OFFSET + buffer_offset) = UART_PROTCL_TYPE_GCODE;
-    *(buffer_to_send + UART_PROTCL_DATALEN_OFFSET + buffer_offset) = dataLen & 0xff;
-    *(buffer_to_send + UART_PROTCL_DATALEN_OFFSET + buffer_offset + 1) = dataLen >> 8;
-    strncpy(buffer_to_send + UART_PROTCL_DATA_OFFSET + buffer_offset, dataField, dataLen);
-    
-    *(buffer_to_send + dataLen + buffer_offset + 4) = UART_PROTCL_TAIL;
-*/
+    log_mkswifi("dataField:%s size:%d", dataField, strlen(dataField));
     
     if(important)
     {
@@ -1172,12 +1093,10 @@ int package_gcode(char *dataField, boolean important)
     }
     else
     {
-        //net_print((const uint8_t *)"overflow", strlen("overflow"));
+        log_mkswifi("overflow");
     }
     return 0;
 }
-
-
 
 int package_file_first(File *fileHandle, char *fileName)
 {
@@ -1185,18 +1104,12 @@ int package_file_first(File *fileHandle, char *fileName)
     char *ptr;
     int fileNameLen;
     int dataLen;
-    char dbgStr[100] = {0};
     
     if(fileHandle == 0)
         return -1;
     fileLen = fileHandle->size();
-    
-    //net_print((const uint8_t *)"package_file_first:\n");
-    
-    //strcpy(fileName, (const char *)fileHandle->name());
-    //sprintf(dbgStr, "fileLen:%d", fileLen);
-    //net_print((const uint8_t *)dbgStr);
-    //net_print((const uint8_t *)"\n");
+    log_mkswifi("package_file_first:");
+    log_mkswifi("fileLen:%d",fileLen);
     while(1)
     {
         ptr = (char *)strchr(fileName, '/');
@@ -1207,11 +1120,8 @@ int package_file_first(File *fileHandle, char *fileName)
             strcpy(fileName, fileName + (ptr - fileName+ 1));
         }
     }
-//  net_print((const uint8_t *)"fileName:");
-    //net_print((const uint8_t *)fileName);
-    //net_print((const uint8_t *)"\n");
+    log_mkswifi("fileName:%s",fileName);
     fileNameLen = strlen(fileName);
-
     dataLen = fileNameLen + 5;
 
     memset(uart_send_package, 0, sizeof(uart_send_package));
@@ -1243,8 +1153,7 @@ int package_file_first(char *fileName, int postLength)
 
     
     fileLen = postLength;
-    
-//  Serial.print("package_file_first:");
+    log_mkswifi("package_file_first:");
     
     while(1)
     {
@@ -1256,9 +1165,7 @@ int package_file_first(char *fileName, int postLength)
             cut_msg_head((uint8_t *)fileName, strlen(fileName),  ptr - fileName+ 1);
         }
     }
-//  Serial.print("fileName:");
-//  Serial.println(fileName);
-    
+    log_mkswifi("fileName:%s",fileName);
     fileNameLen = strlen(fileName);
 
     dataLen = fileNameLen + 5;
@@ -1283,17 +1190,11 @@ int package_file_first(char *fileName, int postLength)
     return 0;
 }
 
-
 int package_file_fragment(uint8_t *dataField, uint32_t fragLen, int32_t fragment)
 {
     int dataLen;
-    char dbgStr[100] = {0};
-
     dataLen = fragLen + 4;
-
-    //sprintf(dbgStr, "fragment:%d\n", fragment);
-    //net_print((const uint8_t *)dbgStr);
-    
+    log_mkswifi("fragment:%d",fragment);
     memset(uart_send_package, 0, sizeof(uart_send_package));
     uart_send_package[UART_PROTCL_HEAD_OFFSET] = UART_PROTCL_HEAD;
     uart_send_package[UART_PROTCL_TYPE_OFFSET] = UART_PROTCL_TYPE_FRAGMENT;
@@ -1473,7 +1374,7 @@ void do_transfer()
 ********************************************************************/
 #define UART_RX_BUFFER_SIZE    1024
 
-#define ESP_PROTOC_HEAD (uint8_t)0xa5
+#define ESP_PROTOC_HEAD     (uint8_t)0xa5
 #define ESP_PROTOC_TAIL     (uint8_t)0xfc
 
 #define ESP_TYPE_NET            (uint8_t)0x0
@@ -1481,7 +1382,7 @@ void do_transfer()
 #define ESP_TYPE_TRANSFER       (uint8_t)0x2
 #define ESP_TYPE_EXCEPTION      (uint8_t)0x3
 #define ESP_TYPE_CLOUD          (uint8_t)0x4
-#define ESP_TYPE_UNBIND     (uint8_t)0x5
+#define ESP_TYPE_UNBIND         (uint8_t)0x5
 #define ESP_TYPE_WID            (uint8_t)0x6
 #define ESP_TYPE_SCAN_WIFI      (uint8_t)0x7
 #define ESP_TYPE_MANUAL_IP      (uint8_t)0x8
@@ -1539,9 +1440,6 @@ static int cut_msg_head(uint8_t *msg, uint16_t msgLen, uint16_t cutLen)
     
 }
 
-
-
-
 static void net_msg_handle(uint8_t * msg, uint16_t msgLen)
 {
     uint8_t cfg_mode;
@@ -1557,7 +1455,7 @@ static void net_msg_handle(uint8_t * msg, uint16_t msgLen)
 
     //0x01:AP
     //0x02:Client
-    //0x03:AP+Client(?Y2??隆矛3?)
+    //0x03:AP+Client(should not happen)
     if((msg[0] != 0x01) && (msg[0] != 0x02)) 
         return;
     cfg_mode = msg[0];
@@ -1640,38 +1538,30 @@ static void net_msg_handle(uint8_t * msg, uint16_t msgLen)
     
 }
 
-static void cloud_msg_handle(uint8_t * msg, uint16_t msgLen)
-{
-//Todo
-}
-
-
 static void scan_wifi_msg_handle()
 {
     uint8_t valid_nums = 0;
     uint32_t byte_offset = 1;
     uint8_t node_lenth;
     int8_t signal_rssi;
-    
-    if(currentState == OperatingState::AccessPoint)
-    {
-        WiFi.mode(WIFI_STA);
-        WiFi.disconnect();
-        delay(100);
-    }
-    
+    //clean memory
+    WiFi.scanDelete();
     int n = WiFi.scanNetworks();
-//  Serial.println("scan done");
+    log_mkswifi("scan done");
     if (n == 0)
     {
-        //Serial.println("no networks found");
+        log_mkswifi("no networks found");
+        //to avoid to stay in APSTA mode
+        if(currentState == OperatingState::AccessPoint)
+            {
+                WiFi.mode(WIFI_AP);
+            }
         return;
     }
     else
     {
         int index = 0;
-        //Serial.print(n);
-        //Serial.println(" networks found");
+        log_mkswifi("%d networks found", n);
         memset(uart_send_package, 0, sizeof(uart_send_package));
         uart_send_package[UART_PROTCL_HEAD_OFFSET] = UART_PROTCL_HEAD;
         uart_send_package[UART_PROTCL_TYPE_OFFSET] = UART_PROTCL_TYPE_HOT_PORT;
@@ -1681,21 +1571,16 @@ static void scan_wifi_msg_handle()
                 break;
             signal_rssi = (int8_t)WiFi.RSSI(i);
             // Print SSID and RSSI for each network found
-            /*Serial.print(i + 1);
-            Serial.print(": ");
-            Serial.print(WiFi.SSID(i));
-            Serial.print(" (");
-            Serial.print(WiFi.RSSI(i));
-            Serial.print(")");
-            Serial.println((WiFi.encryptionType(i) == ENC_TYPE_NONE)?" ":"*");
-            delay(10);*/
+            log_mkswifi("%d: %s (%d) %s",i + 1,WiFi.SSID(i).c_str(),  WiFi.RSSI(i),(WiFi.encryptionType(i) == ENC_TYPE_NONE)?" ":"*" );
             node_lenth = (uint8_t)WiFi.SSID(i).length();
             if(node_lenth > 32)
-            {                   
+            {      
+                log_mkswifi("Name too long, ignored" );             
                 continue;
             }   
             if(signal_rssi < -78)
             {
+                log_mkswifi("Signal too low, ignored" );
                 continue;
             }
 
@@ -1722,9 +1607,14 @@ static void scan_wifi_msg_handle()
         }*/
         
     }
-    //Serial.println("");
+    //clean memory
+    WiFi.scanDelete();
+    //to avoid to stay in APSTA mode
+    if(currentState == OperatingState::AccessPoint)
+    {
+        WiFi.mode(WIFI_AP);
+    }
 }
-
 
 static void manual_ip_msg_handle(uint8_t * msg, uint16_t msgLen)
 {
@@ -1813,11 +1703,6 @@ static void except_msg_handle(uint8_t * msg, uint16_t msgLen)
     }
 }
 
-static void wid_msg_handle(uint8_t * msg, uint16_t msgLen)
-{
-//Todo
-}
-
 static void transfer_msg_handle(uint8_t * msg, uint16_t msgLen)
 {
     int j = 0;
@@ -1841,8 +1726,7 @@ static void transfer_msg_handle(uint8_t * msg, uint16_t msgLen)
             }
             memset(cmd_fifo, 0, sizeof(cmd_fifo));
             cmd_index = 0;
-    //  net_print((const uint8_t*)"push:", strlen((const char *)"push:"));
-    //  net_print((const uint8_t*)cmd_fifo, strlen((const char *)cmd_fifo));
+            log_mkswifi("push: %s",cmd_fifo);
         }
         else if(msg[j] == '\0')
             break;
@@ -1871,16 +1755,8 @@ static void transfer_msg_handle(uint8_t * msg, uint16_t msgLen)
         }
         else
         {
-            //net_print((const uint8_t *)"rx overflow", strlen("rx overflow"));
+            log_mkswifi("rx overflow");
         }
-        /*
-        if((cmd_line[0] == 'o') && (cmd_line[1] == 'k'))
-        {
-            cut_msg_head((uint8_t *)cmd_line, strlen((const char*)cmd_line), 2);
-            //if(strlen(cmd_line) < 4)
-                continue;
-        }*/
-
         /*handle the cmd*/
         paser_cmd((uint8_t *)cmd_line);
         do_transfer();
@@ -1927,20 +1803,14 @@ void esp_data_parser(char *cmdRxBuf, int len)
     int32_t head_pos;
     int32_t tail_pos;
     uint16_t cpyLen;
-    int16_t leftLen = len; //脢拢脫脿鲁陇露脠
+    int16_t leftLen = len;
     uint8_t loop_again = 0;
     int i;
 
     ESP_PROTOC_FRAME esp_frame;
-
-    
-    //net_print((const uint8_t *)"rcv:");
-
-    //net_print((const uint8_t *)"\n");
     
     
     while((leftLen > 0) || (loop_again == 1))
-    //while(leftLen > 0)
     {
         loop_again = 0;
         
@@ -1957,7 +1827,6 @@ void esp_data_parser(char *cmdRxBuf, int len)
             leftLen = leftLen - cpyLen;
             tail_pos = charAtArray(esp_msg_buf, esp_msg_index, ESP_PROTOC_TAIL);
             
-        //  net_print((const uint8_t *)esp_msg_buf, esp_msg_index); 
             if(tail_pos == -1)
             {
                 //脙禄脫脨脰隆脦虏
@@ -1973,7 +1842,7 @@ void esp_data_parser(char *cmdRxBuf, int len)
         else
         {
             head_pos = charAtArray((uint8_t const *)&cmdRxBuf[len - leftLen], leftLen, ESP_PROTOC_HEAD);
-        //  net_print((const uint8_t *)"esp_data_parser1\n");
+            log_mkswifi("esp_data_parser1");
             if(head_pos == -1)
             {
                 //脙禄脫脨脰隆脥路
@@ -1993,7 +1862,7 @@ void esp_data_parser(char *cmdRxBuf, int len)
                 head_pos = 0;
                 
                 tail_pos = charAtArray(esp_msg_buf, esp_msg_index, ESP_PROTOC_TAIL);
-                //net_print((const uint8_t *)"esp_data_parser2\n", strlen((const char *)"esp_data_parser2\n"));
+                log_mkswifi("esp_data_parser2");
                 if(tail_pos == -1)
                 {
                     //脮脪碌陆脰隆脥路拢卢脙禄脫脨脰隆脦虏        
@@ -2002,7 +1871,7 @@ void esp_data_parser(char *cmdRxBuf, int len)
                 
             }
         }
-        //net_print((const uint8_t *)"esp_data_parser3\n");
+        log_mkswifi("esp_data_parser3");
         /*3. 脮脪碌陆脥锚脮没碌脛脪禄脰隆 , 脜脨露脧脢媒戮脻鲁陇露脠*/
         esp_frame.type = esp_msg_buf[1];
     
@@ -2015,10 +1884,10 @@ void esp_data_parser(char *cmdRxBuf, int len)
             //脢媒戮脻脌脿脨脥虏禄脮媒脠路拢卢露陋脝煤
             memset(esp_msg_buf, 0, sizeof(esp_msg_buf));
             esp_msg_index = 0;
-            //net_print((const uint8_t *)"type err\n", strlen("type err\n"));
+            log_mkswifi("type error");
             return;
         }
-        //net_print((const uint8_t *)"esp_data_parser4\n");
+        log_mkswifi("esp_data_parser4");
         esp_frame.dataLen = esp_msg_buf[2] + (esp_msg_buf[3] << 8);
 
         /*脢媒戮脻鲁陇露脠虏禄脮媒脠路*/
@@ -2027,7 +1896,7 @@ void esp_data_parser(char *cmdRxBuf, int len)
             //脢媒戮脻鲁陇露脠虏禄脮媒脠路拢卢露陋脝煤
             memset(esp_msg_buf, 0, sizeof(esp_msg_buf));
             esp_msg_index = 0;
-            //net_print((const uint8_t *)"len err\n", strlen("len err\n"));
+            log_mkswifi("len error");
             return;
         }
 
@@ -2035,7 +1904,7 @@ void esp_data_parser(char *cmdRxBuf, int len)
         {
             //脰隆脦虏虏禄脮媒脠路拢卢露陋脝煤
             memset(esp_msg_buf, 0, sizeof(esp_msg_buf));
-            //net_print((const uint8_t *)"tail err\n", strlen("tail err\n"));
+            log_mkswifi("tail error");
             esp_msg_index = 0;
             return;
         }
@@ -2049,26 +1918,27 @@ void esp_data_parser(char *cmdRxBuf, int len)
         switch(esp_frame.type)
         {
             case ESP_TYPE_NET:
+                log_mkswifi("ESP_TYPE_NET");
                 net_msg_handle(esp_frame.data, esp_frame.dataLen);
                 break;
 
             case ESP_TYPE_PRINTER:
+                //TODO ?
                 //gcode_msg_handle(esp_frame.data, esp_frame.dataLen);
                 break;
 
             case ESP_TYPE_TRANSFER:
-            //  net_print((const uint8_t *)"ESP_TYPE_TRANSFER", strlen((const char *)"ESP_TYPE_TRANSFER"));
+                log_mkswifi("ESP_TYPE_TRANSFER");
                 if(verification_flag)
                     transfer_msg_handle(esp_frame.data, esp_frame.dataLen);
                 break;
 
             case ESP_TYPE_CLOUD:
-                if(verification_flag)
-                    cloud_msg_handle(esp_frame.data, esp_frame.dataLen);
+                //TODO
                 break;
 
             case ESP_TYPE_EXCEPTION:
-                
+                log_mkswifi("ESP_TYPE_EXCEPTION");
                 except_msg_handle(esp_frame.data, esp_frame.dataLen);
                 break;
 
@@ -2079,23 +1949,26 @@ void esp_data_parser(char *cmdRxBuf, int len)
                 }
                 break;
             case ESP_TYPE_WID:
-                wid_msg_handle(esp_frame.data, esp_frame.dataLen);
+                //TODO
                 break;
 
             case ESP_TYPE_SCAN_WIFI:
-                
+                log_mkswifi("ESP_TYPE_SCAN_WIFI");
                 scan_wifi_msg_handle();
                 break;
 
-            case ESP_TYPE_MANUAL_IP:                
+            case ESP_TYPE_MANUAL_IP: 
+                log_mkswifi("ESP_TYPE_MANUAL_IP");               
                 manual_ip_msg_handle(esp_frame.data, esp_frame.dataLen);
                 break;
 
-            case ESP_TYPE_WIFI_CTRL:                
+            case ESP_TYPE_WIFI_CTRL:     
+                log_mkswifi("ESP_TYPE_WIFI_CTRL");              
                 wifi_ctrl_msg_handle(esp_frame.data, esp_frame.dataLen);
                 break;
             
             default:
+                log_mkswifi("Unknow type");  
                 break;              
         }
         /*5. 掳脩脪脩麓娄脌铆碌脛脢媒戮脻陆脴碌么*/
@@ -2131,18 +2004,18 @@ bool TryToConnect()
     EEPROM.get(BAK_ADDRESS_WIFI_VALID, eeprom_valid);
     if(eeprom_valid[0] == 0x0a)
     {   
-        log_esp3d("EEPROM is valid");
-        log_esp3d("Read SSID/Password from EEPROM");
+        log_mkswifi("EEPROM is valid");
+        log_mkswifi("Read SSID/Password from EEPROM");
         EEPROM.get(BAK_ADDRESS_WIFI_MODE, wifi_mode);       
         EEPROM.get(BAK_ADDRESS_WEB_HOST, webhostname);
-        log_esp3d("Mode:%s, web hostname:%s", wifi_mode,webhostname);
+        log_mkswifi("Mode:%s, web hostname:%s", wifi_mode,webhostname);
     }
     else
     {
-        log_esp3d("EEPROM is not valid, reset it");
+        log_mkswifi("EEPROM is not valid, reset it");
         memset(wifi_mode, 0, sizeof(wifi_mode));
         strcpy(wifi_mode, "wifi_mode_ap");
-        log_esp3d("Mode:%s", wifi_mode);
+        log_mkswifi("Mode:%s", wifi_mode);
         NET_INF_UPLOAD_CYCLE = 1000;
     }
     
@@ -2150,44 +2023,44 @@ bool TryToConnect()
 
     if(strcmp(wifi_mode, "wifi_mode_ap") != 0)
     {   
-        log_esp3d("mode is NOT ap");
+        log_mkswifi("mode is NOT ap");
         if(eeprom_valid[0] == 0x0a)
         {
-            log_esp3d("EEPROM is valid");
-            log_esp3d("Read SSID/Password from EEPROM");
+            log_mkswifi("EEPROM is valid");
+            log_mkswifi("Read SSID/Password from EEPROM");
             EEPROM.get(BAK_ADDRESS_WIFI_SSID, ssid);
             EEPROM.get(BAK_ADDRESS_WIFI_KEY, pass);
-            log_esp3d("SSID:%s, pass:%s", ssid, pass);
+            log_mkswifi("SSID:%s, pass:%s", ssid, pass);
         }
         else
         {
-            log_esp3d("EEPROM is not valid, reset it");
+            log_mkswifi("EEPROM is not valid, reset it");
             memset(ssid, 0, sizeof(ssid));
             strcpy(ssid, "mks1");
             memset(pass, 0, sizeof(pass));
             strcpy(pass, "makerbase");
-            log_esp3d("SSID:%s, pass:%s", ssid,pass);
+            log_mkswifi("SSID:%s, pass:%s", ssid,pass);
         }
         
 
         currentState = OperatingState::Client;
-        log_esp3d("Current state is client :%d", currentState);
+        log_mkswifi("Current state is client :%d", currentState);
         package_net_para();
-        log_esp3d("Sending Net Frame");
+        log_mkswifi("Sending Net Frame");
         Serial.write(uart_send_package, uart_send_size);        
-        log_esp3d("Transfert state is: Ready");
+        log_mkswifi("Transfert state is: Ready");
         transfer_state = TRANSFER_READY;
-        log_esp3d("Wait 10s");
+        log_mkswifi("Wait 10s");
         delay(1000);
         
-        log_esp3d("Setup WiFi as STA");
+        log_mkswifi("Setup WiFi as STA");
         WiFi.mode(WIFI_STA);
-        log_esp3d("Disconnect from any AP");
+        log_mkswifi("Disconnect from any AP");
         WiFi.disconnect();
         
         delay(1000);
         
-        log_esp3d("Check if static IP");
+        log_mkswifi("Check if static IP");
         EEPROM.get(BAK_ADDRESS_MANUAL_IP_FLAG, manual_valid);
         
         if(manual_valid == 0xa)
@@ -2198,23 +2071,23 @@ bool TryToConnect()
             EEPROM.get(BAK_ADDRESS_MANUAL_MASK, subnet_static);
             EEPROM.get(BAK_ADDRESS_MANUAL_GATEWAY, gateway_staic);
             EEPROM.get(BAK_ADDRESS_MANUAL_DNS, dns_static);
-            log_esp3d("Use Static IP");
+            log_mkswifi("Use Static IP");
             WiFi.config(ip_static, gateway_staic, subnet_static, dns_static, (uint32_t)0x00000000);
         }
         
-        log_esp3d("Setup WiFi as STA, SSID:%s, PWD:%s", ssid, pass);
+        log_mkswifi("Setup WiFi as STA, SSID:%s, PWD:%s", ssid, pass);
         WiFi.begin(ssid, pass);
 
-        log_esp3d("Connecting");
+        log_mkswifi("Connecting");
         while (WiFi.status() != WL_CONNECTED)
         {
             if(get_printer_reply() > 0)
-            {   log_esp3d("Read incoming data");
+            {   log_mkswifi("Read incoming data");
                 esp_data_parser((char *)uart_rcv_package, uart_rcv_index);
             }
             uart_rcv_index = 0;
             package_net_para();
-            log_esp3d("Sending Net Frame");
+            log_mkswifi("Sending Net Frame");
             Serial.write(uart_send_package, uart_send_size);
             
             delay(500);
@@ -2224,35 +2097,35 @@ bool TryToConnect()
             if (failcount > MAX_WIFI_FAIL)  // 1 min
             {
               delay(100);
-              log_esp3d("Timeout");
+              log_mkswifi("Timeout");
               return false;
             }
-            log_esp3d("Do transfer");
+            log_mkswifi("Do transfer");
             do_transfer();
             
         };
     } else
     {
-       log_esp3d("mode is ap");
+       log_mkswifi("mode is ap");
         if(eeprom_valid[0] == 0x0a)
         {
-            log_esp3d("EEPROM is valid");
-            log_esp3d("Read SSID/Password from EEPROM");
+            log_mkswifi("EEPROM is valid");
+            log_mkswifi("Read SSID/Password from EEPROM");
             EEPROM.get(BAK_ADDRESS_WIFI_SSID, softApName);
             EEPROM.get(BAK_ADDRESS_WIFI_KEY, softApKey);
-            log_esp3d("SSID:%s, pass:%s", softApName,softApKey);
+            log_mkswifi("SSID:%s, pass:%s", softApName,softApKey);
         }
         else
         {   
-            log_esp3d("EEPROM is not valid, reset it");
+            log_mkswifi("EEPROM is not valid, reset it");
             String macStr= WiFi.macAddress();
             macStr.replace(":", "");
             strcat(softApName, macStr.substring(8).c_str());
             memset(pass, 0, sizeof(pass));
-             log_esp3d("SSID:%s, no password", softApName);
+             log_mkswifi("SSID:%s, no password", softApName);
         }
         currentState = OperatingState::AccessPoint;
-        log_esp3d("Current state is Access point :%d", currentState);
+        log_mkswifi("Current state is Access point :%d", currentState);
         
         WiFi.mode(WIFI_AP);
         WiFi.softAPConfig(apIP, apIP, IPAddress(255, 255, 255, 0));
@@ -2260,105 +2133,17 @@ bool TryToConnect()
             WiFi.softAP(softApName, softApKey);
         else
             WiFi.softAP(softApName);
-            log_esp3d("Setup WiFi as AP, SSID:%s, PWD:%s", softApName, softApKey);
+            log_mkswifi("Setup WiFi as AP, SSID:%s, PWD:%s", softApName, softApKey);
     }
     return true;
 }
 
-uint8_t refreshApWeb()
-{
-    wifiConfigHtml = F("<html><head><meta http-equiv='Content-Type' content='text/html;'><title>MKS WIFI</title><style>body{background: #b5ff6a;}.config{margin: 150px auto;width: 600px;height: 600px;overflow: hidden;</style></head>");
-    wifiConfigHtml += F("<body><div class='config'></caption><br /><h2>Update</h2>");
-    wifiConfigHtml += F("<form method='POST' action='update_sketch' enctype='multipart/form-data'><table border='0'><tr><td>wifi firmware:</td><td><input type='file' name='update' ></td><td><input type='submit' value='update'></td></tr></form>");
-    wifiConfigHtml += F("<form method='POST' action='update_fs' enctype='multipart/form-data'><tr><td>web view:</td><td><input type='file' name='update' ></td><td><input type='submit' value='update'></td></tr></table></form>");
-    wifiConfigHtml += F("<br /><br /><h2>WIFI Configuration</h2><form method='GET' action='update_cfg'><caption><input type='radio' id='wifi_mode_sta' name='wifi_mode' value='wifi_mode_sta' /><label for='wifi_mode_sta'>STA</label><br />");
-    wifiConfigHtml += F("<input type='radio' id='wifi_mode_ap' name='wifi_mode' value='wifi_mode_ap' /><label for='wifi_mode_ap'>AP</label><br /><br /><table border='0'><tr><td>");
-    wifiConfigHtml += F("WIFI: </td><td><input type='text' id='hidden_ssid' name='hidden_ssid' /></td></tr><tr><td>KEY: </td><td><input type='"); 
-#ifdef SHOW_PASSWORDS
-    wifiConfigHtml += F("text");
-#else
-    wifiConfigHtml += F("password");
-#endif
-    wifiConfigHtml += F("' id='password' name='password' />");
-    wifiConfigHtml += F("</td></tr><tr><td colspan=2 align='right'> <input type='submit' value='config and reboot'></td></tr></table></form></div></body></html>");
-    return 0;
-}
-
 char hidden_ssid[32] = {0};
 
-void onWifiConfig()
-{
-    uint8_t num_ssids = refreshApWeb();
 
-    server.on("/", HTTP_GET, []() {
-        server.send(200, FPSTR(STR_MIME_TEXT_HTML), wifiConfigHtml);
-    });
-    server.on("/update_sketch", HTTP_GET, []() {
-        server.send(200, FPSTR(STR_MIME_TEXT_HTML), wifiConfigHtml);
-    });
-    server.on("/update_fs", HTTP_GET, []() {
-        server.send(200, FPSTR(STR_MIME_TEXT_HTML), wifiConfigHtml);
-    });
-
- 
-    server.on("/update_cfg", HTTP_GET, []() {
-        if (server.args() <= 0) 
-        {
-            server.send(500, FPSTR(STR_MIME_TEXT_PLAIN), F("Got no data, go back and retry"));
-            return;
-        }
-        for (uint8_t e = 0; e < server.args(); e++) {
-            String argument = server.arg(e);
-            urldecode(argument);
-            if (server.argName(e) == "password") argument.toCharArray(pass, 64);
-            else if (server.argName(e) == "ssid") argument.toCharArray(ssid, 32);
-            else if (server.argName(e) == "hidden_ssid") argument.toCharArray(hidden_ssid, 32);
-            else if (server.argName(e) == "wifi_mode") argument.toCharArray(wifi_mode, 15);
-        }
-
-        if(strlen((const char *)hidden_ssid) <= 0)
-        {
-            server.send(200, FPSTR(STR_MIME_TEXT_HTML), F("<p>wifi parameters error!</p>"));
-            return;
-        }
-        if((strcmp(wifi_mode, "wifi_mode_ap") == 0) && (strlen(pass) > 0) && ((strlen(pass) < 8) ))
-        {
-            server.send(500, FPSTR(STR_MIME_TEXT_PLAIN), F("wifi password length is not correct, go back and retry"));
-            return; 
-        }
-        else
-        {
-            memset(ssid, 0, sizeof(ssid));
-            memcpy(ssid, hidden_ssid, sizeof(hidden_ssid));
-        }
-        
-        char valid[1] = {0x0a};
-        
-        EEPROM.put(BAK_ADDRESS_WIFI_SSID, ssid);
-        EEPROM.put(BAK_ADDRESS_WIFI_KEY, pass);
-        EEPROM.put(BAK_ADDRESS_WEB_HOST, webhostname);
-
-        EEPROM.put(BAK_ADDRESS_WIFI_MODE, wifi_mode);
-
-        EEPROM.put(BAK_ADDRESS_WIFI_VALID, valid);
-
-        EEPROM.put(BAK_ADDRESS_MANUAL_IP_FLAG, 0xff);
-        manual_valid = 0xff;
-
-        EEPROM.commit();
-
-        server.send(200, FPSTR(STR_MIME_TEXT_HTML), F("<p>Configure successfully!<br />Please use the new ip to connect again.</p>"));
-    
-        delay(300);
-        ESP.restart();
-    });
-}
 
 void StartAccessPoint()
 {
-    
-        
-    
     delay(5000);
     IPAddress apIP(192, 168, 4, 1);
     WiFi.mode(WIFI_AP);
@@ -2367,413 +2152,7 @@ void StartAccessPoint()
     macStr.replace(":", "");
     strcat(softApName, macStr.substring(8).c_str());
     WiFi.softAP(softApName);
-
-    onWifiConfig();
-    
-  
-  server.begin();
-}
-
-void fsHandler()
-{
-    String path = server.uri();
-
-    if(!verification_flag)
-    {
-        return;
-    }
-
-    bool addedGz = false;
-    File dataFile = LittleFS.open(path, "r");
-
-    if (!dataFile && !path.endsWith(".gz") && path.length() <= 29)
-    {
-        // Requested file not found and wasn't a zipped file, so see if we have a zipped version
-        path += F(".gz");
-        addedGz = true;
-        dataFile = LittleFS.open(path, "r");
-    }
-    if (!dataFile)
-    {
-        server.send(404, FPSTR(STR_MIME_APPLICATION_JSON), "{\"err\": \"404: " + server.uri() + " NOT FOUND\"}");
-        return;
-    }
-    // No need to add the file size or encoding headers here because streamFile() does that automatically
-    String dataType = FPSTR(STR_MIME_TEXT_PLAIN);
-    if (path.endsWith(".html") || path.endsWith(".htm")) dataType = FPSTR(STR_MIME_TEXT_HTML);
-    else if (path.endsWith(".css") || path.endsWith(".css.gz")) dataType = F("text/css");
-    else if (path.endsWith(".js") || path.endsWith(".js.gz")) dataType = F("application/javascript");
-    else if (!addedGz && path.endsWith(".gz")) dataType = F("application/x-gzip");
-    else if ( path.endsWith(".png")) dataType = F("application/x-png");
-    else if ( path.endsWith(".ico")) dataType = F("image/x-icon");
-
-    server.streamFile(dataFile, dataType);
-
-
-    dataFile.close();
-
-}
-
-void handleUpload()
-{
-//Luc TODO
-/*
-  uint32_t now;
-  uint8_t readBuf[1024];
-
-  uint32_t postLength = server.getPostLength();
-  String uri = server.uri();
-  
-
-  if(uri != NULL)
-  {
-    if((transfer_file_flag) || (transfer_state != TRANSFER_IDLE) || (gPrinterInf.print_state != PRINTER_IDLE))
-    {   
-        server.send(409, FPSTR(STR_MIME_TEXT_PLAIN), FPSTR("409 Conflict"));    
-        return;
-    }
-        
-    if(server.hasArg((const char *) "X-Filename"))
-    {
-        if((transfer_file_flag) || (transfer_state != TRANSFER_IDLE))
-        {
-            server.send(500, FPSTR(STR_MIME_APPLICATION_JSON), FPSTR(STR_JSON_ERR_500_IS_BUSY));        
-            return;
-        }
-
-        file_fragment = 0;
-        rcv_end_flag = false;
-        transfer_file_flag = true;
-        gFileFifo.reset();
-        upload_error = false;
-        upload_success = false;
-
-        String FileName = server.arg((const char *) "X-Filename");
-        //package_gcode(FileName, true);
-        //transfer_state = TRANSFER_READY;
-        //digitalWrite(EspReqTransferPin, LOW);
-        //String fileNameAfterDecode = urlDecode(FileName);
-        //package_gcode(fileNameAfterDecode, true);
-        //transfer_state = TRANSFER_READY;
-        //digitalWrite(EspReqTransferPin, LOW);
-        if(package_file_first((char *)FileName.c_str(), (int)postLength) == 0)
-        {
-            //transfer_state = TRANSFER_READY;
-            //digitalWrite(EspReqTransferPin, LOW);
-        }
-        else
-        {
-            transfer_file_flag = false;
-        }
-        //wait m3 reply for first frame
-        int wait_tick = 0;
-        while(1)
-        {
-            do_transfer();
-            
-            delay(100);
-
-            wait_tick++;
-
-            if(wait_tick > 20) // 2s
-            {
-                if(digitalRead(McuTfrReadyPin) == HIGH) // STM32 READY SIGNAL
-                {
-                    upload_error = true;        
-                //  Serial.println("upload_error");
-                }
-                else
-                {
-            //      Serial.println("upload_sucess");
-                }
-                break;
-            }
-            
-            int len_get = get_printer_reply();
-            if(len_get > 0)
-            {
-                esp_data_parser((char *)uart_rcv_package, len_get);
-            
-                uart_rcv_index = 0;
-            }
-
-            if(upload_error)
-            {
-                break;
-            }
-        }
-        
-        if(!upload_error)
-        {
-            
-             now = millis();
-            do
-            {
-                do_transfer();
-
-                int len = get_printer_reply();
-            
-                if(len > 0)
-                {
-                //  Serial.println("rcv");
-                    esp_data_parser((char *)uart_rcv_package, len);
-                
-                    uart_rcv_index = 0;
-                }
-
-                if(upload_error || upload_success)
-                {
-                    break;
-                }
-
-                if (postLength != 0)
-                {                 
-                    uint32_t len = gFileFifo.left();
-
-
-
-                    if (len > postLength)
-                    {
-                         len = postLength;
-                    }
-                    if(len > sizeof(readBuf))
-                    {
-                         len = sizeof(readBuf);
-                    }   
-                    if(len > 0)
-                    {
-
-                        size_t len2 = server.readPostdata(server.client(), readBuf, len);
-                
-                        if (len2 > 0)
-                        {
-                            postLength -= len2;
-
-                            gFileFifo.push((char *)readBuf, len2);
-
-                            
-                            now = millis();
-                        }
-                    }
-                    
-                }
-                else
-                {
-                    rcv_end_flag = true;
-                    break;
-                }
-                yield();
-            
-                
-            }while (millis() - now < 10000);
-        }
-        
-        if(upload_success || rcv_end_flag )
-        {
-            server.send(200, FPSTR(STR_MIME_APPLICATION_JSON), FPSTR(STR_JSON_ERR_0));  
-        }  else
-        {
-            if(Serial.baudRate() != 115200)
-            {
-                Serial.flush();
-                Serial.begin(115200);
-              }
-            transfer_file_flag = false;
-            rcv_end_flag = false;
-            transfer_state = TRANSFER_IDLE;
-            server.send(500, FPSTR(STR_MIME_APPLICATION_JSON), FPSTR(STR_JSON_ERR_500_NO_DATA_RECEIVED));   
-        }
-        
-    }
-    else
-    {
-        
-        server.send(500, FPSTR(STR_MIME_APPLICATION_JSON), FPSTR(STR_JSON_ERR_500_NO_FILENAME_PROVIDED));   
-        return;
-    }
-    
-
-         
-  }
-
-  
-*/
 }
 
 
-void handleRrUpload() {
-}
-
-void urldecode(String &input) { // LAL ^_^
-  input.replace("%0A", String('\n'));
-  input.replace("%20", " ");
-  input.replace("+", " ");
-  input.replace("%21", "!");
-  input.replace("%22", "\"");
-  input.replace("%23", "#");
-  input.replace("%24", "$");
-  input.replace("%25", "%");
-  input.replace("%26", "&");
-  input.replace("%27", "\'");
-  input.replace("%28", "(");
-  input.replace("%29", ")");
-  input.replace("%30", "*");
-  input.replace("%31", "+");
-  input.replace("%2C", ",");
-  input.replace("%2E", ".");
-  input.replace("%2F", "/");
-  input.replace("%2C", ",");
-  input.replace("%3A", ":");
-  input.replace("%3A", ";");
-  input.replace("%3C", "<");
-  input.replace("%3D", "=");
-  input.replace("%3E", ">");
-  input.replace("%3F", "?");
-  input.replace("%40", "@");
-  input.replace("%5B", "[");
-  input.replace("%5C", "\\");
-  input.replace("%5D", "]");
-  input.replace("%5E", "^");
-  input.replace("%5F", "-");
-  input.replace("%60", "`");
-  input.replace("%7B", "{");
-  input.replace("%7D", "}");
-}
-
-String urlDecode(const String& text)
-{
-    String decoded = "";
-    char temp[] = "0x00";
-    unsigned int len = text.length();
-    unsigned int i = 0;
-    while (i < len)
-    {
-        char decodedChar;
-        char encodedChar = text.charAt(i++);
-        if ((encodedChar == '%') && (i + 1 < len))
-        {
-            temp[2] = text.charAt(i++);
-            temp[3] = text.charAt(i++);
-
-            decodedChar = strtol(temp, NULL, 16);
-        }
-        else {
-            if (encodedChar == '+')
-            {
-                decodedChar = ' ';
-            }
-            else {
-                decodedChar = encodedChar;  // normal ascii char
-            }
-        }
-        decoded += decodedChar;
-    }
-    return decoded;
-}
-
-
-void urlencode(String &input) { // LAL ^_^
-  input.replace(String('\n'), "%0A");
-  input.replace(" " , "+");
-  input.replace("!" , "%21");
-  input.replace("\"", "%22" );
-  input.replace("#" , "%23");
-  input.replace("$" , "%24");
-  //input.replace("%" , "%25");
-  input.replace("&" , "%26");
-  input.replace("\'", "%27" );
-  input.replace("(" , "%28");
-  input.replace(")" , "%29");
-  input.replace("*" , "%30");
-  input.replace("+" , "%31");
-  input.replace("," , "%2C");
-  //input.replace("." , "%2E");
-  input.replace("/" , "%2F");
-  input.replace(":" , "%3A");
-  input.replace(";" , "%3A");
-  input.replace("<" , "%3C");
-  input.replace("=" , "%3D");
-  input.replace(">" , "%3E");
-  input.replace("?" , "%3F");
-  input.replace("@" , "%40");
-  input.replace("[" , "%5B");
-  input.replace("\\", "%5C" );
-  input.replace("]" , "%5D");
-  input.replace("^" , "%5E");
-  input.replace("-" , "%5F");
-  input.replace("`" , "%60");
-  input.replace("{" , "%7B");
-  input.replace("}" , "%7D");
-}
-
-String fileUrlEncode(String str)
-{
-    String encodedString="";
-    char c;
-    char code0;
-    char code1;
-    char code2;
-    for (int i =0; i < str.length(); i++){
-      c=str.charAt(i);
-      if (c == ' '){
-        encodedString+= '+';
-      } else if (isalnum(c)){
-        encodedString+=c;
-      } else{
-        code1=(c & 0xf)+'0';
-        if ((c & 0xf) >9){
-            code1=(c & 0xf) - 10 + 'A';
-        }
-        c=(c>>4)&0xf;
-        code0=c+'0';
-        if (c > 9){
-            code0=c - 10 + 'A';
-        }
-        code2='\0';
-        encodedString+='%';
-        encodedString+=code0;
-        encodedString+=code1;
-        //encodedString+=code2;
-      }
-      yield();
-    }
-    return encodedString;
-    
-}
-
-String fileUrlEncode(char *array)
-{
-    String encodedString="";
-    String str(array);
-    char c;
-    char code0;
-    char code1;
-    char code2;
-    for (int i =0; i < str.length(); i++){
-      c=str.charAt(i);
-      if (c == ' '){
-        encodedString+= '+';
-      } else if (isalnum(c)){
-        encodedString+=c;
-      } else{
-        code1=(c & 0xf)+'0';
-        if ((c & 0xf) >9){
-            code1=(c & 0xf) - 10 + 'A';
-        }
-        c=(c>>4)&0xf;
-        code0=c+'0';
-        if (c > 9){
-            code0=c - 10 + 'A';
-        }
-        code2='\0';
-        encodedString+='%';
-        encodedString+=code0;
-        encodedString+=code1;
-        //encodedString+=code2;
-      }
-      yield();
-    }
-    return encodedString;
-    
-}
 

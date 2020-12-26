@@ -3,7 +3,7 @@
 #ifndef CONFIG_H_INCLUDED
 #define CONFIG_H_INCLUDED
 #include "defines.h"
-#include "debug_esp3d.h"
+#include "MksDebug.h"
 
 //DEBUG
 //#define ESP_DEBUG_FEATURE DEBUG_OUTPUT_TELNET
