@@ -16,4 +16,10 @@
 #define TFT24       1
 #define ROBIN       2
 
+typedef enum  {
+    Unknown = 0,
+    Client = 1,
+    AccessPoint = 2
+} OperatingState;
+
 

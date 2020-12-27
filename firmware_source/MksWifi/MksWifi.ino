@@ -3,19 +3,18 @@
 #include <FS.h>
 #include <LittleFS.h>
 #include <ESP8266HTTPClient.h>
-#include <WiFiUdp.h>
 #include "MksEEPROM.h"
 #include "MksCloud.h"
 #include "MksHTTPServer.h"
 #include "MksTCPServer.h"
+#include "MksSerialCom.h"
+#include "MksNodeMonitor.h"
 #include "gcode.h"
 
 //define
 #define MAX_WIFI_FAIL 50
 #define QUEUE_MAX_NUM    10
 
-
-#define UDP_PORT    8989
 #define TCP_FRAG_LEN    1400
 
 #define FILE_FIFO_SIZE  (4096)
@@ -24,44 +23,21 @@
 #define FILE_BLOCK_SIZE (1024 - 5 - 4)
 
 
-#define UART_PROTCL_HEAD_OFFSET     0
-#define UART_PROTCL_TYPE_OFFSET     1
-#define UART_PROTCL_DATALEN_OFFSET  2
-#define UART_PROTCL_DATA_OFFSET     4
-
-#define UART_PROTCL_HEAD    (char)0xa5
-#define UART_PROTCL_TAIL    (char)0xfc
-
-#define UART_PROTCL_TYPE_NET            (char)0x0
-#define UART_PROTCL_TYPE_GCODE          (char)0x1
-#define UART_PROTCL_TYPE_FIRST          (char)0x2
-#define UART_PROTCL_TYPE_FRAGMENT       (char)0x3
-#define UART_PROTCL_TYPE_HOT_PORT       (char)0x4
-#define UART_PROTCL_TYPE_STATIC_IP      (char)0x5
-
-
-
 //Variable
 char M3_TYPE = TFT28;
 boolean GET_VERSION_OK = false;
 char wifi_mode[15] = {0};
 char moduleId[21] = {0};
-char  softApName[96]= {0};
+char softApName[32]= {0};
 char softApKey[64] = {0};
 char ssid[32] = {0};
 char pass[64] = {0};
 char webhostname[64];
 uint8_t manual_valid = 0xff; //whether it use static ip
-uint32_t ip_static, subnet_static, gateway_staic, dns_static;
-
-
-volatile bool verification_flag = false;
-IPAddress apIP(192, 168, 4, 1);
-char filePath[100];
+uint32_t ip_static, subnet_static, gateway_static, dns_static;
+bool verification_flag = false;
 char cmd_fifo[100] = {0};
 int cmd_index = 0;
-WiFiUDP node_monitor;
-
 
 String monitor_tx_buf = "";
 String monitor_rx_buf = "";
@@ -72,12 +48,10 @@ uint32_t uart_send_size;
 char uart_send_package_important[1024]; //for the message that cannot missed
 uint32_t uart_send_length_important;
 
-char jsBuffer[1024];
-
 bool upload_error = false;
 bool upload_success = false;
-uint32_t lastBeatTick = 0;
-uint32_t lastStaticIpInfTick = 0;
+
+
 unsigned long socket_busy_stamp = 0;
 int file_fragment = 0;
 File dataFile;
@@ -110,13 +84,6 @@ typedef enum {
 } TRANS_STATE;
 
 TRANS_STATE transfer_state = TRANSFER_IDLE;
-
-
-enum OperatingState {
-    Unknown = 0,
-    Client = 1,
-    AccessPoint = 2
-};
 
 OperatingState currentState = OperatingState::Unknown;
 
@@ -285,37 +252,6 @@ bool smartConfig()
     }
 }
 
-void reply_search_handler()
-{
-    char packetBuffer[200];
-    int packetSize = node_monitor.parsePacket();
-    char  ReplyBuffer[50] = "mkswifi:";
-
-
-    if (packetSize) {
-        // read the packet into packetBufffer
-        node_monitor.read(packetBuffer, sizeof(packetBuffer));
-
-        if(strstr(packetBuffer, "mkswifi")) {
-            memcpy(&ReplyBuffer[strlen("mkswifi:")], moduleId, strlen(moduleId));
-            ReplyBuffer[strlen("mkswifi:") + strlen(moduleId)] = ',';
-            if(currentState == OperatingState::Client) {
-                strcpy(&ReplyBuffer[strlen("mkswifi:") + strlen(moduleId) + 1], WiFi.localIP().toString().c_str());
-                ReplyBuffer[strlen("mkswifi:") + strlen(moduleId) + strlen(WiFi.localIP().toString().c_str()) + 1] = '\n';
-            } else if(currentState == OperatingState::AccessPoint) {
-                strcpy(&ReplyBuffer[strlen("mkswifi:") + strlen(moduleId) + 1], WiFi.softAPIP().toString().c_str());
-                ReplyBuffer[strlen("mkswifi:") + strlen(moduleId) + strlen(WiFi.softAPIP().toString().c_str()) + 1] = '\n';
-            }
-
-
-            // send a reply, to the IP address and port that sent us the packet we received
-            node_monitor.beginPacket(node_monitor.remoteIP(), node_monitor.remotePort());
-            node_monitor.write(ReplyBuffer, strlen(ReplyBuffer));
-            node_monitor.endPacket();
-        }
-    }
-}
-
 void verification()
 {
     verification_flag = true;
@@ -340,7 +276,7 @@ void net_env_prepare()
 {
     WebServer.begin();
     TcpServer.begin();
-    node_monitor.begin(UDP_PORT);
+    NodeMonitor.begin();
 }
 
 
@@ -383,6 +319,8 @@ void net_print(const uint8_t *sbuf, uint32_t len)
 void query_printer_inf()
 {
     static int last_query_temp_time = 0;
+    static uint32_t lastBeatTick = 0;
+    static uint32_t lastStaticIpInfTick = 0;
 
     if((!transfer_file_flag) &&  (transfer_state == TRANSFER_IDLE)) {
 
@@ -488,7 +426,7 @@ void loop()
         if(verification_flag) {
             query_printer_inf();
             if(millis() - socket_busy_stamp > 5000) {
-                reply_search_handler();
+                NodeMonitor.handle();
             }
         } else {
             verification();
@@ -641,10 +579,10 @@ int package_static_ip_info()
     uart_send_package[UART_PROTCL_DATA_OFFSET + 6] = (subnet_static >> 16) & 0xff;
     uart_send_package[UART_PROTCL_DATA_OFFSET + 7] = (subnet_static >> 24) & 0xff;
 
-    uart_send_package[UART_PROTCL_DATA_OFFSET + 8] = gateway_staic & 0xff;
-    uart_send_package[UART_PROTCL_DATA_OFFSET + 9] = (gateway_staic >> 8) & 0xff;
-    uart_send_package[UART_PROTCL_DATA_OFFSET + 10] = (gateway_staic >> 16) & 0xff;
-    uart_send_package[UART_PROTCL_DATA_OFFSET + 11] = (gateway_staic >> 24) & 0xff;
+    uart_send_package[UART_PROTCL_DATA_OFFSET + 8] = gateway_static & 0xff;
+    uart_send_package[UART_PROTCL_DATA_OFFSET + 9] = (gateway_static >> 8) & 0xff;
+    uart_send_package[UART_PROTCL_DATA_OFFSET + 10] = (gateway_static >> 16) & 0xff;
+    uart_send_package[UART_PROTCL_DATA_OFFSET + 11] = (gateway_static >> 24) & 0xff;
 
     uart_send_package[UART_PROTCL_DATA_OFFSET + 12] = dns_static & 0xff;
     uart_send_package[UART_PROTCL_DATA_OFFSET + 13] = (dns_static >> 8) & 0xff;
@@ -880,8 +818,6 @@ int package_file_fragment(uint8_t *dataField, uint32_t fragLen, int32_t fragment
     uart_send_package[dataLen + 4] = UART_PROTCL_TAIL;
 
     uart_send_size = 1024;
-
-
     return 0;
 }
 
@@ -1257,16 +1193,16 @@ static void manual_ip_msg_handle(uint8_t * msg, uint16_t msgLen)
 
     ip_static = (msg[3] << 24) + (msg[2] << 16) + (msg[1] << 8) + msg[0];
     subnet_static = (msg[7] << 24) + (msg[6] << 16) + (msg[5] << 8) + msg[4];
-    gateway_staic = (msg[11] << 24) + (msg[10] << 16) + (msg[9] << 8) + msg[8];
+    gateway_static = (msg[11] << 24) + (msg[10] << 16) + (msg[9] << 8) + msg[8];
     dns_static = (msg[15] << 24) + (msg[14] << 16) + (msg[13] << 8) + msg[12];
 
     manual_valid = 0xa;
 
-    WiFi.config(ip_static, gateway_staic, subnet_static, dns_static, (uint32_t)0x00000000);
+    WiFi.config(ip_static, gateway_static, subnet_static, dns_static, (uint32_t)0x00000000);
 
     EEPROM.put(BAK_ADDRESS_MANUAL_IP, ip_static);
     EEPROM.put(BAK_ADDRESS_MANUAL_MASK, subnet_static);
-    EEPROM.put(BAK_ADDRESS_MANUAL_GATEWAY, gateway_staic);
+    EEPROM.put(BAK_ADDRESS_MANUAL_GATEWAY, gateway_static);
     EEPROM.put(BAK_ADDRESS_MANUAL_DNS, dns_static);
     EEPROM.put(BAK_ADDRESS_MANUAL_IP_FLAG, manual_valid);
 
@@ -1644,13 +1580,12 @@ bool TryToConnect()
 
         if(manual_valid == 0xa) {
             uint32_t manual_ip, manual_subnet, manual_gateway, manual_dns;
-
             EEPROM.get(BAK_ADDRESS_MANUAL_IP, ip_static);
             EEPROM.get(BAK_ADDRESS_MANUAL_MASK, subnet_static);
-            EEPROM.get(BAK_ADDRESS_MANUAL_GATEWAY, gateway_staic);
+            EEPROM.get(BAK_ADDRESS_MANUAL_GATEWAY, gateway_static);
             EEPROM.get(BAK_ADDRESS_MANUAL_DNS, dns_static);
             log_mkswifi("Use Static IP");
-            WiFi.config(ip_static, gateway_staic, subnet_static, dns_static, (uint32_t)0x00000000);
+            WiFi.config(ip_static, gateway_static, subnet_static, dns_static, (uint32_t)0x00000000);
         }
 
         log_mkswifi("Setup WiFi as STA, SSID:%s, PWD:%s", ssid, pass);
@@ -1682,6 +1617,7 @@ bool TryToConnect()
         };
     } else {
         log_mkswifi("mode is ap");
+        IPAddress apIP(192, 168, 4, 1);
         if(eeprom_valid[0] == 0x0a) {
             log_mkswifi("EEPROM is valid");
             log_mkswifi("Read SSID/Password from EEPROM");
