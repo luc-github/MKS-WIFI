@@ -1,45 +1,35 @@
 #ifndef _GCODE_H_
 #define _GCODE_H_
+#include <Arduino.h>
 
-#define TFT28		0
-#define TFT24		1
-#define ROBIN		2
 
-typedef enum
-{
-	PRINTER_NOT_CONNECT,
-	PRINTER_IDLE,
-	PRINTER_PRINTING,
-	PRINTER_PAUSE,
+typedef enum {
+    PRINTER_NOT_CONNECT,
+    PRINTER_IDLE,
+    PRINTER_PRINTING,
+    PRINTER_PAUSE,
 } PRINT_STATE;
 
 
-typedef struct
-{
-	int print_rate;
-	int print_hours;
-	int print_mins;
-	int print_seconds;
-	String file_name;
-	int file_size;
+typedef struct {
+    int print_rate;
+    int print_hours;
+    int print_mins;
+    int print_seconds;
+    String file_name;
+    int file_size;
 } PRINT_FILE_INF;
 
-typedef struct
-{
-	float curSprayerTemp[2];	// 2个喷头温度
-	float curBedTemp;	//热床温度
-	float desireSprayerTemp[2];// 2个喷头目标温度
-	float desireBedTemp;// 热床目标温度
-	
-	String sd_file_list;
-	//String sd_file_list_t; //缓存
-	//String udisk_file_list;	
-	//String udisk_file_list_t;//缓存
+typedef struct {
+    float curSprayerTemp[2];
+    float curBedTemp;
+    float desireSprayerTemp[2];
+    float desireBedTemp;
+    String sd_file_list;
+    PRINT_STATE print_state;
+    PRINT_FILE_INF print_file_inf;
 
-	PRINT_STATE print_state;	//打印状态
-	PRINT_FILE_INF print_file_inf;
 
-	
 } PRINT_INF;
 
 extern char M3_TYPE;
@@ -49,7 +39,6 @@ extern PRINT_INF gPrinterInf;
 extern bool file_list_flag;
 extern bool getting_file_flag;
 
-extern File treeFile;
 
 #ifdef __cplusplus
 extern "C" {

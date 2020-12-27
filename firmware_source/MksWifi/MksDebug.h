@@ -40,6 +40,6 @@ void TelnetDebug(const char* format, ...);
 #endif //DEBUG_OUTPUT_TELNET 
 #else
 #define log_mkswifi(format, ...)
-#define log_mkswifiS(format, ...) 
+#define log_mkswifiS(format, ...)
 #endif //ESP_DEBUG_FEATURE
 

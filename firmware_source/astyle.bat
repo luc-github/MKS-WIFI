@@ -1,5 +1,5 @@
 
-cd %~dpMksWifi
+cd %~dp0MksWifi
 astyle --recursive --style=otbs *.h *.cpp *.ino
 del /S *.ori
 dir

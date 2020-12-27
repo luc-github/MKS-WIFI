@@ -2,8 +2,7 @@
 
 #include <ESP8266WebServer.h>
 
-typedef enum
-{
+typedef enum {
     UPDATE_NOT_DONE,
     UPDATE_UNKNOW_ERROR,
     UPDATE_FILE_ERROR,
@@ -13,11 +12,11 @@ typedef enum
 
 class MksHTTPServer
 {
-  public:
+public:
     MksHTTPServer();
     void begin();
     void handle();
-  private:
+private:
     static UPDATE_RESULT _update_result;
     static bool _transfer_file_flag;
     static void handleNotFound ();

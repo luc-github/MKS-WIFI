@@ -43,8 +43,9 @@ WiFiClient  debugClient;
 
 bool isDebugStarted = false;
 
-void TelnetDebug(const char* format, ...){
-    
+void TelnetDebug(const char* format, ...)
+{
+
     char    loc_buf[64];
     char*   temp = loc_buf;
     va_list arg;
@@ -73,8 +74,8 @@ void TelnetDebug(const char* format, ...){
         }
         debugClient = debugServer.available();
     }
-    if(debugClient){
-        if (debugClient.availableForWrite()>=len){
+    if(debugClient) {
+        if (debugClient.availableForWrite()>=len) {
             debugClient.write(temp, len);
         }
     }
