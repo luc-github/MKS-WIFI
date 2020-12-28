@@ -15,16 +15,20 @@
 #define UART_PROTCL_TYPE_HOT_PORT       (char)0x4
 #define UART_PROTCL_TYPE_STATIC_IP      (char)0x5
 
+#define UART_FRAME_SIZE 1024
+
 class MksSerialCom
 {
-  public:
+public:
     MksSerialCom();
     void begin();
     void handle();
     bool sendNetworkInfos();
-  private:
-  
-    
+private:
+    bool canSendFrame();
+    void clearFrame();
+    char _frame[UART_FRAME_SIZE];
+
 };
 
 extern MksSerialCom serialcom;

@@ -2,13 +2,13 @@
 #include <WiFiUdp.h>
 class MksNodeMonitor
 {
-  public:
+public:
     MksNodeMonitor();
     void begin();
     void handle();
-  private:
+private:
     WiFiUDP _node_monitor;
-    
+
 };
 
 extern MksNodeMonitor NodeMonitor;

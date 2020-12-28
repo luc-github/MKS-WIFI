@@ -9,13 +9,16 @@ MksNodeMonitor NodeMonitor;
 extern OperatingState currentState;
 extern char moduleId[21];
 
-MksNodeMonitor::MksNodeMonitor(){
-    
+MksNodeMonitor::MksNodeMonitor()
+{
+
 }
-void MksNodeMonitor::begin(){
+void MksNodeMonitor::begin()
+{
     _node_monitor.begin(UDP_PORT);
 }
-void MksNodeMonitor::handle(){
+void MksNodeMonitor::handle()
+{
     char packetBuffer[200];
     int packetSize = _node_monitor.parsePacket();
     char  ReplyBuffer[50] = "mkswifi:";

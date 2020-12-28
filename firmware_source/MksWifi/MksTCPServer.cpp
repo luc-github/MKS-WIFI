@@ -13,6 +13,11 @@ void MksTCPServer::begin()
     _server.begin();
 }
 
+int MksTCPServer::port()
+{
+    return TCP_SERVER_PORT;
+}
+
 uint32_t  MksTCPServer::write(const uint8_t *sbuf, uint32_t len)
 {
     if (_currentClient && _currentClient.connected()) {

@@ -21,7 +21,8 @@
 #define BUF_INC_POINTER(p)  ((p + 1 == FILE_FIFO_SIZE) ? 0:(p + 1))
 
 #define FILE_BLOCK_SIZE (1024 - 5 - 4)
-
+char cmd_fifo[100] = {0};
+uint cmd_index = 0;
 
 //Variable
 char M3_TYPE = TFT28;
@@ -32,12 +33,11 @@ char softApName[32]= {0};
 char softApKey[64] = {0};
 char ssid[32] = {0};
 char pass[64] = {0};
-char webhostname[64];
+char webhostname[64]= {0};
 uint8_t manual_valid = 0xff; //whether it use static ip
 uint32_t ip_static, subnet_static, gateway_static, dns_static;
 bool verification_flag = false;
-char cmd_fifo[100] = {0};
-int cmd_index = 0;
+
 
 String monitor_tx_buf = "";
 String monitor_rx_buf = "";
@@ -57,12 +57,12 @@ int file_fragment = 0;
 File dataFile;
 int transfer_frags = 0;
 char uart_rcv_package[1024];
-int uart_rcv_index = 0;
+uint uart_rcv_index = 0;
 boolean printFinishFlag = false;
 boolean transfer_file_flag = false;
 boolean rcv_end_flag = false;
 uint8_t dbgStr[100] ;
-int NET_INF_UPLOAD_CYCLE = 10000;
+uint NET_INF_UPLOAD_CYCLE = 10000;
 
 //Struct
 struct QUEUE {
@@ -182,7 +182,7 @@ void init_queue(struct QUEUE *h_queue)
     memset(h_queue->buf, 0, sizeof(h_queue->buf));
 }
 
-int push_queue(struct QUEUE *h_queue, char *data_to_push, int data_len)
+int push_queue(struct QUEUE *h_queue, char *data_to_push, uint data_len)
 {
     if(h_queue == 0) {
         return -1;
@@ -204,7 +204,7 @@ int push_queue(struct QUEUE *h_queue, char *data_to_push, int data_len)
     return 0;
 }
 
-int pop_queue(struct QUEUE *h_queue, char *data_for_pop, int data_len)
+int pop_queue(struct QUEUE *h_queue, char *data_for_pop, uint data_len)
 {
     if(h_queue == 0) {
         return -1;
@@ -303,9 +303,7 @@ void setup()
         StartAccessPoint();
         currentState = OperatingState::AccessPoint;
     }
-    package_net_para();
-    log_mkswifi("Sending Net Frame");
-    Serial.write(uart_send_package, uart_send_size);
+    serialcom.sendNetworkInfos();
 
     net_env_prepare();
     delay(500);
@@ -319,7 +317,6 @@ void net_print(const uint8_t *sbuf, uint32_t len)
 void query_printer_inf()
 {
     static int last_query_temp_time = 0;
-    static uint32_t lastBeatTick = 0;
     static uint32_t lastStaticIpInfTick = 0;
 
     if((!transfer_file_flag) &&  (transfer_state == TRANSFER_IDLE)) {
@@ -361,12 +358,7 @@ void query_printer_inf()
     if((!transfer_file_flag) &&  (transfer_state == TRANSFER_IDLE)) {
 
         //beat package
-        if(millis() - lastBeatTick > NET_INF_UPLOAD_CYCLE) {
-            package_net_para();
-            /*transfer_state = TRANSFER_READY;
-            digitalWrite(EspReqTransferPin, LOW);*/
-            lastBeatTick = millis();
-        }
+        serialcom.handle();
 
     }
     if((manual_valid == 0xa) && (!transfer_file_flag) &&  (transfer_state == TRANSFER_IDLE)) {
@@ -410,8 +402,6 @@ int get_printer_reply()
 
 void loop()
 {
-    int i;
-
     if(currentState != OperatingState::Unknown) {
         WebServer.handle();
         TcpServer.handle();
@@ -425,6 +415,7 @@ void loop()
 
         if(verification_flag) {
             query_printer_inf();
+            //TODO move timeout to handle but need to check why socket_busy_stamp is reset else where
             if(millis() - socket_busy_stamp > 5000) {
                 NodeMonitor.handle();
             }
@@ -438,132 +429,8 @@ void loop()
 
 
 
-int package_net_para()
-{
-    int dataLen;
-    int wifi_name_len;
-    int wifi_key_len;
-    int host_len = strlen(CLOUD_HOST);
-    log_mkswifi("Net Frame preparation");
-    log_mkswifi("Clear buffer");
-    memset(uart_send_package, 0, sizeof(uart_send_package));
-    log_mkswifi("Set frame header");
-    uart_send_package[UART_PROTCL_HEAD_OFFSET] = UART_PROTCL_HEAD;
-    uart_send_package[UART_PROTCL_TYPE_OFFSET] = UART_PROTCL_TYPE_NET;
-
-    if(currentState == OperatingState::Client) {
-        log_mkswifi("STA Mode");
-        if(WiFi.status() == WL_CONNECTED) {
-            log_mkswifi("Connected : %s", WiFi.localIP().toString().c_str());
-            uart_send_package[UART_PROTCL_DATA_OFFSET] = WiFi.localIP()[0];
-            uart_send_package[UART_PROTCL_DATA_OFFSET + 1] = WiFi.localIP()[1];
-            uart_send_package[UART_PROTCL_DATA_OFFSET + 2] = WiFi.localIP()[2];
-            uart_send_package[UART_PROTCL_DATA_OFFSET + 3] = WiFi.localIP()[3];
-            uart_send_package[UART_PROTCL_DATA_OFFSET + 6] = 0x0a;
-        } else {
-            log_mkswifi("Not Connected");
-            uart_send_package[UART_PROTCL_DATA_OFFSET] = 0;
-            uart_send_package[UART_PROTCL_DATA_OFFSET + 1] = 0;
-            uart_send_package[UART_PROTCL_DATA_OFFSET + 2] = 0;
-            uart_send_package[UART_PROTCL_DATA_OFFSET + 3] = 0;
-            uart_send_package[UART_PROTCL_DATA_OFFSET + 6] = 0x05;
-        }
-
-        uart_send_package[UART_PROTCL_DATA_OFFSET + 7] = 0x02;
-
-        wifi_name_len = strlen(ssid);
-        wifi_key_len = strlen(pass);
-
-        uart_send_package[UART_PROTCL_DATA_OFFSET + 8] = wifi_name_len;
-
-        strcpy(&uart_send_package[UART_PROTCL_DATA_OFFSET + 9], ssid);
-
-        uart_send_package[UART_PROTCL_DATA_OFFSET + 9 + wifi_name_len] = wifi_key_len;
-
-        strcpy(&uart_send_package[UART_PROTCL_DATA_OFFSET + 10 + wifi_name_len], pass);
-
-
-    } else if(currentState == OperatingState::AccessPoint) {
-        log_mkswifi("AP Mode: %s", WiFi.softAPIP().toString().c_str());
-        uart_send_package[UART_PROTCL_DATA_OFFSET] = WiFi.softAPIP()[0];
-        uart_send_package[UART_PROTCL_DATA_OFFSET + 1] = WiFi.softAPIP()[1];
-        uart_send_package[UART_PROTCL_DATA_OFFSET + 2] = WiFi.softAPIP()[2];
-        uart_send_package[UART_PROTCL_DATA_OFFSET + 3] = WiFi.softAPIP()[3];
-
-        uart_send_package[UART_PROTCL_DATA_OFFSET + 6] = 0x0a;
-        uart_send_package[UART_PROTCL_DATA_OFFSET + 7] = 0x01;
-
-
-        wifi_name_len = strlen(softApName);
-        wifi_key_len = strlen(softApKey);
-        log_mkswifi("SSID (%d): %s, PWD (%d):%s",wifi_name_len,softApName, wifi_key_len,softApKey);
-        uart_send_package[UART_PROTCL_DATA_OFFSET + 8] = wifi_name_len;
-        strcpy(&uart_send_package[UART_PROTCL_DATA_OFFSET + 9], softApName);
-        uart_send_package[UART_PROTCL_DATA_OFFSET + 9 + wifi_name_len] = wifi_key_len;
-        strcpy(&uart_send_package[UART_PROTCL_DATA_OFFSET + 10 + wifi_name_len], softApKey);
-    }
-
-
-
-    if(cloud_enable_flag) {
-        log_mkswifi("Cloud service is enabled");
-        if(cloud_link_state == 3) {
-            uart_send_package[UART_PROTCL_DATA_OFFSET + wifi_name_len + wifi_key_len + 10] =0x12;
-        } else if( (cloud_link_state == 1) || (cloud_link_state == 2)) {
-            uart_send_package[UART_PROTCL_DATA_OFFSET + wifi_name_len + wifi_key_len + 10] =0x11;
-        } else if(cloud_link_state == 0) {
-            uart_send_package[UART_PROTCL_DATA_OFFSET + wifi_name_len + wifi_key_len + 10] =0x10;
-        }
-    } else {
-        log_mkswifi("Cloud service is disabled");
-        uart_send_package[UART_PROTCL_DATA_OFFSET + wifi_name_len + wifi_key_len + 10] =0x0;
-
-    }
-
-    log_mkswifi("Cloud Host (%d): %s, port: %d", host_len, CLOUD_HOST, CLOUD_PORT);
-    uart_send_package[UART_PROTCL_DATA_OFFSET + wifi_name_len + wifi_key_len + 11] = host_len;
-    strcpy(&uart_send_package[UART_PROTCL_DATA_OFFSET + wifi_name_len + wifi_key_len + 12], CLOUD_HOST);
-    uart_send_package[UART_PROTCL_DATA_OFFSET + wifi_name_len + wifi_key_len + host_len + 12] = CLOUD_PORT & 0xff;
-    uart_send_package[UART_PROTCL_DATA_OFFSET + wifi_name_len + wifi_key_len + host_len + 13] = (CLOUD_PORT >> 8 ) & 0xff;
-
-
-    int id_len = strlen(moduleId);
-    log_mkswifi("ModuleID (%d): %s", id_len, moduleId);
-    uart_send_package[UART_PROTCL_DATA_OFFSET + wifi_name_len + wifi_key_len + host_len + 14]  = id_len;
-    strcpy(&uart_send_package[UART_PROTCL_DATA_OFFSET + wifi_name_len + wifi_key_len + host_len + 15], moduleId);
-
-    int ver_len = strlen(FW_VERSION);
-    log_mkswifi("FW (%d): %s", ver_len, FW_VERSION);
-    uart_send_package[UART_PROTCL_DATA_OFFSET + wifi_name_len + wifi_key_len + host_len + id_len + 15]  = ver_len;
-    strcpy(&uart_send_package[UART_PROTCL_DATA_OFFSET + wifi_name_len + wifi_key_len + host_len + id_len + 16], FW_VERSION);
-
-    dataLen = wifi_name_len + wifi_key_len + host_len + id_len + ver_len + 16;
-    log_mkswifi("Cloud service Port: %d", 8080);
-    uart_send_package[UART_PROTCL_DATA_OFFSET + 4] = 8080 & 0xff;
-    uart_send_package[UART_PROTCL_DATA_OFFSET + 5] = (8080 >> 8 )& 0xff;
-
-    if(!verification_flag) {
-        uart_send_package[UART_PROTCL_DATA_OFFSET + 6] = 0x0e;
-        log_mkswifi("Exception state");
-    }
-
-    log_mkswifi("Data len: %d", dataLen);
-    uart_send_package[UART_PROTCL_DATALEN_OFFSET] = dataLen & 0xff;
-    uart_send_package[UART_PROTCL_DATALEN_OFFSET + 1] = (dataLen >> 8 )& 0xff;
-
-
-    uart_send_package[dataLen + 4] = UART_PROTCL_TAIL;
-
-    uart_send_size = dataLen + 5;
-
-    return uart_send_size;
-}
-
 int package_static_ip_info()
 {
-    int dataLen;
-    int wifi_name_len;
-    int wifi_key_len;
 
     memset(uart_send_package, 0, sizeof(uart_send_package));
     uart_send_package[UART_PROTCL_HEAD_OFFSET] = UART_PROTCL_HEAD;
@@ -595,72 +462,16 @@ int package_static_ip_info()
     uart_send_package[UART_PROTCL_DATA_OFFSET + 16] = UART_PROTCL_TAIL;
 
     uart_send_size = UART_PROTCL_DATA_OFFSET + 17;
+
+    return uart_send_size;
 }
 
-int package_gcode(String gcodeStr, boolean important)
-{
-    int dataLen;
-    const char *dataField = gcodeStr.c_str();
-
-    uint32_t buffer_offset;
-
-    dataLen = strlen(dataField);
-
-    if(dataLen > 1019) {
-        return -1;
-    }
-
-    if(important) {
-        buffer_offset = uart_send_length_important;
-    } else {
-        buffer_offset = 0;
-        memset(uart_send_package, 0, sizeof(uart_send_package));
-    }
-
-    if(dataLen + buffer_offset > 1019) {
-        return -1;
-    }
-    log_mkswifi("dataField:%s size:%d", dataField, strlen(dataField));
-    if(important) {
-        uart_send_package_important[UART_PROTCL_HEAD_OFFSET + buffer_offset] = UART_PROTCL_HEAD;
-        uart_send_package_important[UART_PROTCL_TYPE_OFFSET + buffer_offset] = UART_PROTCL_TYPE_GCODE;
-        uart_send_package_important[UART_PROTCL_DATALEN_OFFSET + buffer_offset] = dataLen & 0xff;
-        uart_send_package_important[UART_PROTCL_DATALEN_OFFSET + buffer_offset + 1] = dataLen >> 8;
-
-        strncpy(&uart_send_package_important[UART_PROTCL_DATA_OFFSET + buffer_offset], dataField, dataLen);
-
-        uart_send_package_important[dataLen + buffer_offset + 4] = UART_PROTCL_TAIL;
-
-        uart_send_length_important += dataLen + 5;
-    } else {
-        uart_send_package[UART_PROTCL_HEAD_OFFSET + buffer_offset] = UART_PROTCL_HEAD;
-        uart_send_package[UART_PROTCL_TYPE_OFFSET + buffer_offset] = UART_PROTCL_TYPE_GCODE;
-        uart_send_package[UART_PROTCL_DATALEN_OFFSET + buffer_offset] = dataLen & 0xff;
-        uart_send_package[UART_PROTCL_DATALEN_OFFSET + buffer_offset + 1] = dataLen >> 8;
-
-        strncpy(&uart_send_package[UART_PROTCL_DATA_OFFSET + buffer_offset], dataField, dataLen);
-
-        uart_send_package[dataLen + buffer_offset + 4] = UART_PROTCL_TAIL;
-
-        uart_send_size = dataLen + 5;
-    }
 
 
-
-    if(monitor_tx_buf.length() + gcodeStr.length() < 300) {
-        monitor_tx_buf.concat(gcodeStr);
-    } else {
-        log_mkswifi("overflow");
-    }
-
-
-    return 0;
-}
-
-int package_gcode(char *dataField, boolean important)
+int package_gcode(const char *dataField, boolean important)
 {
     uint32_t buffer_offset;
-    int dataLen = strlen((const char *)dataField);
+    uint dataLen = strlen((const char *)dataField);
 
     if(important) {
 
@@ -669,6 +480,7 @@ int package_gcode(char *dataField, boolean important)
         buffer_offset = 0;
         memset(uart_send_package, 0, sizeof(uart_send_package));
     }
+
     if(dataLen + buffer_offset > 1019) {
         return -1;
     }
@@ -708,12 +520,16 @@ int package_gcode(char *dataField, boolean important)
     return 0;
 }
 
+int package_gcode(String gcodeStr, boolean important)
+{
+    return package_gcode(gcodeStr.c_str(), important);
+}
 int package_file_first(File *fileHandle, char *fileName)
 {
     int fileLen;
     char *ptr;
     int fileNameLen;
-    int dataLen;
+    uint dataLen;
 
     if(fileHandle == 0) {
         return -1;
@@ -828,14 +644,6 @@ uint8_t blockBuf[FILE_BLOCK_SIZE] = {0};
 
 void do_transfer()
 {
-
-    char dbgStr[100] = {0};
-    int i;
-    long useTick ;
-    long now;
-
-
-
     switch(transfer_state) {
     case TRANSFER_IDLE:
         if((uart_send_length_important > 0) || (uart_send_size > 0)) {
@@ -1131,7 +939,6 @@ static void scan_wifi_msg_handle()
         }
         return;
     } else {
-        int index = 0;
         log_mkswifi("%d networks found", n);
         memset(uart_send_package, 0, sizeof(uart_send_package));
         uart_send_package[UART_PROTCL_HEAD_OFFSET] = UART_PROTCL_HEAD;
@@ -1336,9 +1143,8 @@ void esp_data_parser(char *cmdRxBuf, int len)
     int32_t head_pos;
     int32_t tail_pos;
     uint16_t cpyLen;
-    int16_t leftLen = len;
+    uint16_t leftLen = len;
     uint8_t loop_again = 0;
-    int i;
 
     ESP_PROTOC_FRAME esp_frame;
 
@@ -1413,7 +1219,7 @@ void esp_data_parser(char *cmdRxBuf, int len)
         esp_frame.dataLen = esp_msg_buf[2] + (esp_msg_buf[3] << 8);
 
         /*脢媒戮脻鲁陇露脠虏禄脮媒脠路*/
-        if(4 + esp_frame.dataLen > sizeof(esp_msg_buf)) {
+        if((uint16_t)(esp_frame.dataLen +4) > sizeof(esp_msg_buf)) {
             //脢媒戮脻鲁陇露脠虏禄脮媒脠路拢卢露陋脝煤
             memset(esp_msg_buf, 0, sizeof(esp_msg_buf));
             esp_msg_index = 0;
@@ -1560,9 +1366,7 @@ bool TryToConnect()
 
         currentState = OperatingState::Client;
         log_mkswifi("Current state is client :%d", currentState);
-        package_net_para();
-        log_mkswifi("Sending Net Frame");
-        Serial.write(uart_send_package, uart_send_size);
+        serialcom.sendNetworkInfos();
         log_mkswifi("Transfert state is: Ready");
         transfer_state = TRANSFER_READY;
         log_mkswifi("Wait 10s");
@@ -1579,7 +1383,7 @@ bool TryToConnect()
         EEPROM.get(BAK_ADDRESS_MANUAL_IP_FLAG, manual_valid);
 
         if(manual_valid == 0xa) {
-            uint32_t manual_ip, manual_subnet, manual_gateway, manual_dns;
+            //uint32_t manual_ip, manual_subnet, manual_gateway, manual_dns;
             EEPROM.get(BAK_ADDRESS_MANUAL_IP, ip_static);
             EEPROM.get(BAK_ADDRESS_MANUAL_MASK, subnet_static);
             EEPROM.get(BAK_ADDRESS_MANUAL_GATEWAY, gateway_static);
@@ -1598,14 +1402,9 @@ bool TryToConnect()
                 esp_data_parser((char *)uart_rcv_package, uart_rcv_index);
             }
             uart_rcv_index = 0;
-            package_net_para();
-            log_mkswifi("Sending Net Frame");
-            Serial.write(uart_send_package, uart_send_size);
-
+            serialcom.sendNetworkInfos();
             delay(500);
-
             failcount++;
-
             if (failcount > MAX_WIFI_FAIL) { // 1 min
                 delay(100);
                 log_mkswifi("Timeout");

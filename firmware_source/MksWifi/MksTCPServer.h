@@ -6,6 +6,7 @@ public:
     MksTCPServer();
     void begin();
     void handle();
+    int port();
     uint32_t  write(const uint8_t *sbuf, uint32_t len);
     WiFiClient currentClient()
     {
