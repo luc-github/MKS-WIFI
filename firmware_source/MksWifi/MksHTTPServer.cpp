@@ -246,7 +246,8 @@ void handleUpload()
         //package_gcode(fileNameAfterDecode, true);
         //transfer_state = TRANSFER_READY;
         //digitalWrite(EspReqTransferPin, LOW);
-        if(package_file_first((char *)FileName.c_str(), (int)postLength) == 0)
+        use fileNameFragment(FileName.c_str(), (int)postLength)
+        if(serialcom.fileNameFragment((char *)FileName.c_str(), (int)postLength) == 0)
         {
             //transfer_state = TRANSFER_READY;
             //digitalWrite(EspReqTransferPin, LOW);

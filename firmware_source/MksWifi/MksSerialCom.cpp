@@ -5,6 +5,21 @@
 #include "MksTCPServer.h"
 
 
+#define UART_PROTCL_HEAD_OFFSET     0
+#define UART_PROTCL_TYPE_OFFSET     1
+#define UART_PROTCL_DATALEN_OFFSET  2
+#define UART_PROTCL_DATA_OFFSET     4
+
+#define UART_PROTCL_HEAD    (char)0xa5
+#define UART_PROTCL_TAIL    (char)0xfc
+
+#define UART_PROTCL_TYPE_NET            (char)0x0
+#define UART_PROTCL_TYPE_GCODE          (char)0x1
+#define UART_PROTCL_TYPE_FIRST          (char)0x2
+#define UART_PROTCL_TYPE_FRAGMENT       (char)0x3
+#define UART_PROTCL_TYPE_HOT_SPOT       (char)0x4
+#define UART_PROTCL_TYPE_STATIC_IP      (char)0x5
+
 #define FRAME_WAIT_TO_SEND_TIMEOUT  2000
 #define NET_FRAME_REFRESH_TIME  10000
 
@@ -29,6 +44,7 @@ MksSerialCom serialcom;
 MksSerialCom::MksSerialCom()
 {
     _frameSize=0;
+    _importantFrameSize = 0;
 }
 void MksSerialCom::begin()
 {
@@ -39,23 +55,38 @@ void MksSerialCom::handle()
 {
 }
 
-bool MksSerialCom::transferFragment()
+bool MksSerialCom::transferFragment(bool isImportant)
 {
     bool res = false;
-    if (Serial.write(_frame, _frameSize) == _frameSize) {
-        log_mkswifi("Send frame Ok");
-        res = true;
+    if(isImportant) {
+        if (Serial.write(_importantFrame, _importantFrameSize) == _importantFrameSize) {
+            log_mkswifi("Send frame Ok");
+            res = true;
+        } else {
+            log_mkswifi("Send frame failed");
+        }
+        _importantFrameSize =0;
     } else {
-        log_mkswifi("Send frame failed");
+        if (Serial.write(_frame, _frameSize) == _frameSize) {
+            log_mkswifi("Send frame Ok");
+            res = true;
+        } else {
+            log_mkswifi("Send frame failed");
+        }
+        _frameSize = 0;
     }
-    clearFrame();
+    clearFrame(isImportant);
     return res;
 }
 
-void MksSerialCom::clearFrame()
+void MksSerialCom::clearFrame(bool isImportant)
 {
     log_mkswifi("Clear buffer");
-    memset(_frame, 0, sizeof(_frame));
+    if (isImportant) {
+        memset(_importantFrame, 0, sizeof(_importantFrame));
+    } else {
+        memset(_frame, 0, sizeof(_frame));
+    }
 }
 
 void MksSerialCom::communicationMode()
@@ -73,7 +104,7 @@ void MksSerialCom::transferMode()
     }
 }
 
-void MksSerialCom::StaticIPInfosFragment()
+void MksSerialCom::staticIPInfosFragment()
 {
     static uint32_t staticFrameTimeout = millis();
     if ((millis() - staticFrameTimeout) > NET_FRAME_REFRESH_TIME + 2) {
@@ -238,6 +269,164 @@ void MksSerialCom::NetworkInfosFragment(bool force)
     } else {
         log_mkswifi("Not in timeout");
     }
+}
+
+void MksSerialCom::gcodeFragment(const char *dataField, bool important)
+{
+    uint32_t buffer_offset;
+    uint dataLen = strlen((const char *)dataField);
+
+    if(important) {
+        buffer_offset = _importantFrameSize;
+    } else {
+        buffer_offset = 0;
+        clearFrame();
+    }
+
+    if(dataLen + buffer_offset > (UART_FRAME_SIZE-5)) {
+        log_mkswifi("Cannot add the fragment");
+        return ;
+    }
+    log_mkswifi("dataField:%s size:%d", dataField, strlen(dataField));
+
+    if(important) {
+        _importantFrame[UART_PROTCL_HEAD_OFFSET + buffer_offset] = UART_PROTCL_HEAD;
+        _importantFrame[UART_PROTCL_TYPE_OFFSET + buffer_offset] = UART_PROTCL_TYPE_GCODE;
+        _importantFrame[UART_PROTCL_DATALEN_OFFSET + buffer_offset] = dataLen & 0xff;
+        _importantFrame[UART_PROTCL_DATALEN_OFFSET + buffer_offset + 1] = dataLen >> 8;
+
+        strncpy(&_importantFrame[UART_PROTCL_DATA_OFFSET + buffer_offset], dataField, dataLen);
+
+        _importantFrame[dataLen + buffer_offset + 4] = UART_PROTCL_TAIL;
+
+        _importantFrameSize += dataLen + 5;
+    } else {
+        _frame[UART_PROTCL_HEAD_OFFSET + buffer_offset] = UART_PROTCL_HEAD;
+        _frame[UART_PROTCL_TYPE_OFFSET + buffer_offset] = UART_PROTCL_TYPE_GCODE;
+        _frame[UART_PROTCL_DATALEN_OFFSET + buffer_offset] = dataLen & 0xff;
+        _frame[UART_PROTCL_DATALEN_OFFSET + buffer_offset + 1] = dataLen >> 8;
+
+        strncpy(&_frame[UART_PROTCL_DATA_OFFSET + buffer_offset], dataField, dataLen);
+
+        _frame[dataLen + buffer_offset + 4] = UART_PROTCL_TAIL;
+
+        _frameSize = dataLen + 5;
+    }
+}
+
+void MksSerialCom::fileNameFragment(const char *fileName, uint32_t fileSize)
+{
+    int fileNameLen;
+    int dataLen;
+    log_mkswifi("fileNameFragment:");
+    String name = fileName;
+    int p = name.lastIndexOf("/");
+    p++;
+    log_mkswifi("fileName:%s Name:%s",fileName,&name[p]);
+    fileNameLen = strlen(fileName)-p;
+    dataLen = fileNameLen + 5;
+    clearFrame();
+    _frame[UART_PROTCL_HEAD_OFFSET] = UART_PROTCL_HEAD;
+    _frame[UART_PROTCL_TYPE_OFFSET] = UART_PROTCL_TYPE_FIRST;
+    _frame[UART_PROTCL_DATALEN_OFFSET] = dataLen & 0xff;
+    _frame[UART_PROTCL_DATALEN_OFFSET + 1] = dataLen >> 8;
+    _frame[UART_PROTCL_DATA_OFFSET] = fileNameLen;
+    _frame[UART_PROTCL_DATA_OFFSET + 1] = fileSize & 0xff;
+    _frame[UART_PROTCL_DATA_OFFSET + 2] = (fileSize >> 8) & 0xff;
+    _frame[UART_PROTCL_DATA_OFFSET + 3] = (fileSize >> 16) & 0xff;
+    _frame[UART_PROTCL_DATA_OFFSET + 4] = (fileSize >> 24) & 0xff;
+    memcpy(&_frame[UART_PROTCL_DATA_OFFSET + 5], fileName, fileNameLen);
+    _frame[dataLen + 4] = UART_PROTCL_TAIL;
+    _frameSize = dataLen + 5;
+}
+
+void MksSerialCom::fileFragment(uint8_t *dataField, uint32_t fragLen, int32_t fragment)
+{
+    int dataLen;
+    dataLen = fragLen + 4;
+    log_mkswifi("fragment:%d",fragment);
+    clearFrame();
+    _frame[UART_PROTCL_HEAD_OFFSET] = UART_PROTCL_HEAD;
+    _frame[UART_PROTCL_TYPE_OFFSET] = UART_PROTCL_TYPE_FRAGMENT;
+    _frame[UART_PROTCL_DATALEN_OFFSET] = dataLen & 0xff;
+    _frame[UART_PROTCL_DATALEN_OFFSET + 1] = dataLen >> 8;
+
+    _frame[UART_PROTCL_DATA_OFFSET] = fragment & 0xff;
+    _frame[UART_PROTCL_DATA_OFFSET + 1] = (fragment >> 8) & 0xff;
+    _frame[UART_PROTCL_DATA_OFFSET + 2] = (fragment >> 16) & 0xff;
+    _frame[UART_PROTCL_DATA_OFFSET + 3] = (fragment >> 24) & 0xff;
+
+    memcpy(&_frame[UART_PROTCL_DATA_OFFSET + 4], (const char *)dataField, fragLen);
+
+    _frame[dataLen + 4] = UART_PROTCL_TAIL;
+
+    _frameSize = UART_FRAME_SIZE;
+}
+
+void MksSerialCom::hotSpotFragment()
+{
+    uint8_t valid_nums = 0;
+    uint32_t byte_offset = 1;
+    uint8_t node_length;
+    int8_t signal_rssi;
+    //clean memory
+    WiFi.scanDelete();
+    int n = WiFi.scanNetworks();
+    log_mkswifi("scan done");
+    if (n == 0) {
+        log_mkswifi("no networks found");
+        //to avoid to stay in APSTA mode
+        if(currentState == OperatingState::AccessPoint) {
+            WiFi.mode(WIFI_AP);
+        }
+        return;
+    } else {
+        log_mkswifi("%d networks found", n);
+        clearFrame();
+        _frame[UART_PROTCL_HEAD_OFFSET] = UART_PROTCL_HEAD;
+        _frame[UART_PROTCL_TYPE_OFFSET] = UART_PROTCL_TYPE_HOT_SPOT;
+        for (int i = 0; i < n; ++i) {
+            if(valid_nums > 15) {
+                break;
+            }
+            signal_rssi = (int8_t)WiFi.RSSI(i);
+            // Print SSID and RSSI for each network found
+            log_mkswifi("%d: %s (%d) %s",i + 1,WiFi.SSID(i).c_str(),  WiFi.RSSI(i),(WiFi.encryptionType(i) == ENC_TYPE_NONE)?" ":"*" );
+            node_length = (uint8_t)WiFi.SSID(i).length();
+            if(node_length > 32) {
+                log_mkswifi("Name too long, ignored" );
+                continue;
+            }
+            if(signal_rssi < -78) {
+                log_mkswifi("Signal too low, ignored" );
+                continue;
+            }
+
+            _frame[UART_PROTCL_DATA_OFFSET + byte_offset] = node_length;
+            WiFi.SSID(i).toCharArray(&_frame[UART_PROTCL_DATA_OFFSET + byte_offset + 1], node_length + 1, 0);
+            _frame[UART_PROTCL_DATA_OFFSET + byte_offset + node_length + 1] = WiFi.RSSI(i);
+
+            valid_nums++;
+            byte_offset += node_length + 2;
+
+        }
+
+        _frame[UART_PROTCL_DATA_OFFSET] = valid_nums;
+        _frame[UART_PROTCL_DATA_OFFSET + byte_offset] = UART_PROTCL_TAIL;
+        _frame[UART_PROTCL_DATALEN_OFFSET] = byte_offset & 0xff;
+        _frame[UART_PROTCL_DATALEN_OFFSET + 1] = byte_offset >> 8;
+
+        _frameSize = byte_offset + 5;
+
+
+    }
+    //clean memory
+    WiFi.scanDelete();
+    //to avoid to stay in APSTA mode
+    if(currentState == OperatingState::AccessPoint) {
+        WiFi.mode(WIFI_AP);
+    }
+
 }
 
 bool MksSerialCom::sendNetworkInfos()

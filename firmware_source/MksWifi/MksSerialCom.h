@@ -1,20 +1,5 @@
 #pragma once
 
-#define UART_PROTCL_HEAD_OFFSET     0
-#define UART_PROTCL_TYPE_OFFSET     1
-#define UART_PROTCL_DATALEN_OFFSET  2
-#define UART_PROTCL_DATA_OFFSET     4
-
-#define UART_PROTCL_HEAD    (char)0xa5
-#define UART_PROTCL_TAIL    (char)0xfc
-
-#define UART_PROTCL_TYPE_NET            (char)0x0
-#define UART_PROTCL_TYPE_GCODE          (char)0x1
-#define UART_PROTCL_TYPE_FIRST          (char)0x2
-#define UART_PROTCL_TYPE_FRAGMENT       (char)0x3
-#define UART_PROTCL_TYPE_HOT_PORT       (char)0x4
-#define UART_PROTCL_TYPE_STATIC_IP      (char)0x5
-
 #define UART_FRAME_SIZE 1024
 
 class MksSerialCom
@@ -25,15 +10,21 @@ public:
     void handle();
     bool sendNetworkInfos();
     void NetworkInfosFragment(bool force = false);
-    void StaticIPInfosFragment();
+    void staticIPInfosFragment();
+    void gcodeFragment(const char *dataField, bool important);
+    void fileNameFragment(const char *fileName, uint32_t postLength);
+    void fileFragment(uint8_t *dataField, uint32_t fragLen, int32_t fragment);
+    void hotSpotFragment();
     void communicationMode();
     void transferMode();
-    bool transferFragment();
+    bool transferFragment(bool isImportant=false);
 private:
     bool canSendFrame();
-    void clearFrame();
+    void clearFrame(bool isImportant = false);
     char _frame[UART_FRAME_SIZE];
+    char _importantFrame[UART_FRAME_SIZE];
     uint16_t _frameSize;
+    uint16_t _importantFrameSize;
 
 };
 

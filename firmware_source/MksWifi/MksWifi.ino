@@ -42,7 +42,6 @@ uint32_t dns_static;
 bool verification_flag = false;
 
 
-String monitor_tx_buf = "";
 String monitor_rx_buf = "";
 
 char uart_send_package[1024];
@@ -65,7 +64,6 @@ boolean printFinishFlag = false;
 boolean transfer_file_flag = false;
 boolean rcv_end_flag = false;
 uint8_t dbgStr[100] ;
-uint NET_INF_UPLOAD_CYCLE = 10000;
 
 
 uint8_t blockBuf[FILE_BLOCK_SIZE] = {0};
@@ -86,8 +84,6 @@ TRANS_STATE transfer_state = TRANSFER_IDLE;
 OperatingState currentState = OperatingState::Unknown;
 
 //Functions declaration
-int package_file_first(char *fileName);
-int package_file_fragment(uint8_t *dataField, uint32_t fragLen, int32_t fragment);
 void esp_data_parser(char *cmdRxBuf, int len);
 void handleGcode();
 void StartAccessPoint();
@@ -243,6 +239,116 @@ void verification()
     verification_flag = true;
 }
 
+// Try to connect using the saved SSID and password, returning true if successful
+bool TryToConnect()
+{
+
+    char eeprom_valid[1] = {0};
+    uint8_t failcount = 0;
+    EEPROM.get(BAK_ADDRESS_WIFI_VALID, eeprom_valid);
+    if(eeprom_valid[0] == 0x0a) {
+        log_mkswifi("EEPROM is valid");
+        log_mkswifi("Read SSID/Password from EEPROM");
+        EEPROM.get(BAK_ADDRESS_WIFI_MODE, wifi_mode);
+        EEPROM.get(BAK_ADDRESS_WEB_HOST, webhostname);
+        log_mkswifi("Mode:%s, web hostname:%s", wifi_mode,webhostname);
+    } else {
+        log_mkswifi("EEPROM is not valid, reset it");
+        memset(wifi_mode, 0, sizeof(wifi_mode));
+        strcpy(wifi_mode, "wifi_mode_ap");
+        log_mkswifi("Mode:%s", wifi_mode);
+    }
+    if(strcmp(wifi_mode, "wifi_mode_ap") != 0) {
+        log_mkswifi("mode is NOT ap");
+        if(eeprom_valid[0] == 0x0a) {
+            log_mkswifi("EEPROM is valid");
+            log_mkswifi("Read SSID/Password from EEPROM");
+            EEPROM.get(BAK_ADDRESS_WIFI_SSID, ssid);
+            EEPROM.get(BAK_ADDRESS_WIFI_KEY, pass);
+            log_mkswifi("SSID:%s, pass:%s", ssid, pass);
+        } else {
+            log_mkswifi("EEPROM is not valid, reset it");
+            memset(ssid, 0, sizeof(ssid));
+            strcpy(ssid, "mks1");
+            memset(pass, 0, sizeof(pass));
+            strcpy(pass, "makerbase");
+            log_mkswifi("SSID:%s, pass:%s", ssid,pass);
+        }
+        currentState = OperatingState::Client;
+        log_mkswifi("Current state is client :%d", currentState);
+        serialcom.sendNetworkInfos();
+        log_mkswifi("Transfert state is: Ready");
+        transfer_state = TRANSFER_READY;
+        log_mkswifi("Wait 10s");
+        delay(1000);
+        log_mkswifi("Setup WiFi as STA");
+        WiFi.mode(WIFI_STA);
+        log_mkswifi("Disconnect from any AP");
+        WiFi.disconnect();
+        delay(1000);
+        log_mkswifi("Check if static IP");
+        EEPROM.get(BAK_ADDRESS_MANUAL_IP_FLAG, manual_valid);
+        if(manual_valid == 0xa) {
+            //uint32_t manual_ip, manual_subnet, manual_gateway, manual_dns;
+            EEPROM.get(BAK_ADDRESS_MANUAL_IP, ip_static);
+            EEPROM.get(BAK_ADDRESS_MANUAL_MASK, subnet_static);
+            EEPROM.get(BAK_ADDRESS_MANUAL_GATEWAY, gateway_static);
+            EEPROM.get(BAK_ADDRESS_MANUAL_DNS, dns_static);
+            log_mkswifi("Use Static IP");
+            WiFi.config(ip_static, gateway_static, subnet_static, dns_static, (uint32_t)0x00000000);
+        }
+        log_mkswifi("Setup WiFi as STA, SSID:%s, PWD:%s", ssid, pass);
+        WiFi.begin(ssid, pass);
+        log_mkswifi("Connecting");
+        while (WiFi.status() != WL_CONNECTED) {
+            if(get_printer_reply() > 0) {
+                log_mkswifi("Read incoming data");
+                esp_data_parser((char *)uart_rcv_package, uart_rcv_index);
+            }
+            uart_rcv_index = 0;
+            serialcom.sendNetworkInfos();
+            delay(500);
+            failcount++;
+            if (failcount > MAX_WIFI_FAIL) { // 1 min
+                delay(100);
+                log_mkswifi("Timeout");
+                return false;
+            }
+            log_mkswifi("Do transfer");
+            do_transfer();
+        };
+    } else {
+        log_mkswifi("mode is ap");
+        IPAddress apIP(192, 168, 4, 1);
+        if(eeprom_valid[0] == 0x0a) {
+            log_mkswifi("EEPROM is valid");
+            log_mkswifi("Read SSID/Password from EEPROM");
+            EEPROM.get(BAK_ADDRESS_WIFI_SSID, softApName);
+            EEPROM.get(BAK_ADDRESS_WIFI_KEY, softApKey);
+            log_mkswifi("SSID:%s, pass:%s", softApName,softApKey);
+        } else {
+            log_mkswifi("EEPROM is not valid, reset it");
+            String macStr= WiFi.macAddress();
+            macStr.replace(":", "");
+            strcat(softApName, macStr.substring(8).c_str());
+            memset(pass, 0, sizeof(pass));
+            log_mkswifi("SSID:%s, no password", softApName);
+        }
+        currentState = OperatingState::AccessPoint;
+        log_mkswifi("Current state is Access point :%d", currentState);
+
+        WiFi.mode(WIFI_AP);
+        WiFi.softAPConfig(apIP, apIP, IPAddress(255, 255, 255, 0));
+        if(strlen(softApKey) != 0) {
+            WiFi.softAP(softApName, softApKey);
+        } else {
+            WiFi.softAP(softApName);
+        }
+        log_mkswifi("Setup WiFi as AP, SSID:%s, PWD:%s", softApName, softApKey);
+    }
+    return true;
+}
+
 void var_init()
 {
     gPrinterInf.curBedTemp = 0.0;
@@ -294,9 +400,9 @@ void query_printer_inf()
         if((gPrinterInf.print_state == PRINTER_PRINTING) || (gPrinterInf.print_state == PRINTER_PAUSE)) {
             if(millis() - last_query_temp_time > 5000) { //every 5 seconds
                 if(GET_VERSION_OK) {
-                    package_gcode("M27\nM992\nM994\nM991\nM997\n", false);
+                    serialcom.gcodeFragment("M27\nM992\nM994\nM991\nM997\n", false);
                 } else {
-                    package_gcode("M27\nM992\nM994\nM991\nM997\nM115\n", false);
+                    serialcom.gcodeFragment("M27\nM992\nM994\nM991\nM997\nM115\n", false);
                 }
 
                 /*transfer_state = TRANSFER_READY;
@@ -308,9 +414,9 @@ void query_printer_inf()
             if(millis() - last_query_temp_time > 5000) { //every 5 seconds
 
                 if(GET_VERSION_OK) {
-                    package_gcode("M991\nM27\nM997\n", false);
+                    serialcom.gcodeFragment("M991\nM27\nM997\n", false);
                 } else {
-                    package_gcode("M991\nM27\nM997\nM115\n", false);
+                    serialcom.gcodeFragment("M991\nM27\nM997\nM115\n", false);
                 }
 
                 /*transfer_state = TRANSFER_READY;
@@ -327,7 +433,7 @@ void query_printer_inf()
     }
     if((manual_valid == 0xa) && (!transfer_file_flag) &&  (transfer_state == TRANSFER_IDLE)) {
         //beat package
-        serialcom.StaticIPInfosFragment();
+        serialcom.staticIPInfosFragment();
 
     }
 
@@ -385,174 +491,6 @@ void loop()
 
 }
 
-
-int package_gcode(const char *dataField, boolean important)
-{
-    uint32_t buffer_offset;
-    uint dataLen = strlen((const char *)dataField);
-
-    if(important) {
-        buffer_offset = uart_send_length_important;
-    } else {
-        buffer_offset = 0;
-        memset(uart_send_package, 0, sizeof(uart_send_package));
-    }
-
-    if(dataLen + buffer_offset > 1019) {
-        return -1;
-    }
-    log_mkswifi("dataField:%s size:%d", dataField, strlen(dataField));
-
-    if(important) {
-        uart_send_package_important[UART_PROTCL_HEAD_OFFSET + buffer_offset] = UART_PROTCL_HEAD;
-        uart_send_package_important[UART_PROTCL_TYPE_OFFSET + buffer_offset] = UART_PROTCL_TYPE_GCODE;
-        uart_send_package_important[UART_PROTCL_DATALEN_OFFSET + buffer_offset] = dataLen & 0xff;
-        uart_send_package_important[UART_PROTCL_DATALEN_OFFSET + buffer_offset + 1] = dataLen >> 8;
-
-        strncpy(&uart_send_package_important[UART_PROTCL_DATA_OFFSET + buffer_offset], dataField, dataLen);
-
-        uart_send_package_important[dataLen + buffer_offset + 4] = UART_PROTCL_TAIL;
-
-        uart_send_length_important += dataLen + 5;
-    } else {
-        uart_send_package[UART_PROTCL_HEAD_OFFSET + buffer_offset] = UART_PROTCL_HEAD;
-        uart_send_package[UART_PROTCL_TYPE_OFFSET + buffer_offset] = UART_PROTCL_TYPE_GCODE;
-        uart_send_package[UART_PROTCL_DATALEN_OFFSET + buffer_offset] = dataLen & 0xff;
-        uart_send_package[UART_PROTCL_DATALEN_OFFSET + buffer_offset + 1] = dataLen >> 8;
-
-        strncpy(&uart_send_package[UART_PROTCL_DATA_OFFSET + buffer_offset], dataField, dataLen);
-
-        uart_send_package[dataLen + buffer_offset + 4] = UART_PROTCL_TAIL;
-
-        uart_send_size = dataLen + 5;
-    }
-
-
-
-    if(monitor_tx_buf.length() + strlen(dataField) < 300) {
-        monitor_tx_buf.concat(dataField);
-    } else {
-        log_mkswifi("overflow");
-    }
-    return 0;
-}
-
-int package_file_first(File *fileHandle, char *fileName)
-{
-    int fileLen;
-    char *ptr;
-    int fileNameLen;
-    uint dataLen;
-
-    if(fileHandle == 0) {
-        return -1;
-    }
-    fileLen = fileHandle->size();
-    log_mkswifi("package_file_first:");
-    log_mkswifi("fileLen:%d",fileLen);
-    while(1) {
-        ptr = (char *)strchr(fileName, '/');
-        if(ptr == 0) {
-            break;
-        } else {
-            strcpy(fileName, fileName + (ptr - fileName+ 1));
-        }
-    }
-    log_mkswifi("fileName:%s",fileName);
-    fileNameLen = strlen(fileName);
-    dataLen = fileNameLen + 5;
-
-    memset(uart_send_package, 0, sizeof(uart_send_package));
-    uart_send_package[UART_PROTCL_HEAD_OFFSET] = UART_PROTCL_HEAD;
-    uart_send_package[UART_PROTCL_TYPE_OFFSET] = UART_PROTCL_TYPE_FIRST;
-    uart_send_package[UART_PROTCL_DATALEN_OFFSET] = dataLen & 0xff;
-    uart_send_package[UART_PROTCL_DATALEN_OFFSET + 1] = dataLen >> 8;
-
-    uart_send_package[UART_PROTCL_DATA_OFFSET] = fileNameLen;
-    uart_send_package[UART_PROTCL_DATA_OFFSET + 1] = fileLen & 0xff;
-    uart_send_package[UART_PROTCL_DATA_OFFSET + 2] = (fileLen >> 8) & 0xff;
-    uart_send_package[UART_PROTCL_DATA_OFFSET + 3] = (fileLen >> 16) & 0xff;
-    uart_send_package[UART_PROTCL_DATA_OFFSET + 4] = (fileLen >> 24) & 0xff;
-    strncpy(&uart_send_package[UART_PROTCL_DATA_OFFSET + 5], fileName, fileNameLen);
-
-    uart_send_package[dataLen + 4] = UART_PROTCL_TAIL;
-
-    uart_send_size = dataLen + 5;
-
-    return 0;
-}
-
-int package_file_first(char *fileName, int postLength)
-{
-    int fileLen;
-    char *ptr;
-    int fileNameLen;
-    int dataLen;
-
-
-    fileLen = postLength;
-    log_mkswifi("package_file_first:");
-
-    while(1) {
-        ptr = (char *)strchr(fileName, '/');
-        if(ptr == 0) {
-            break;
-        } else {
-            cut_msg_head((uint8_t *)fileName, strlen(fileName),  ptr - fileName+ 1);
-        }
-    }
-    log_mkswifi("fileName:%s",fileName);
-    fileNameLen = strlen(fileName);
-
-    dataLen = fileNameLen + 5;
-
-    memset(uart_send_package, 0, sizeof(uart_send_package));
-    uart_send_package[UART_PROTCL_HEAD_OFFSET] = UART_PROTCL_HEAD;
-    uart_send_package[UART_PROTCL_TYPE_OFFSET] = UART_PROTCL_TYPE_FIRST;
-    uart_send_package[UART_PROTCL_DATALEN_OFFSET] = dataLen & 0xff;
-    uart_send_package[UART_PROTCL_DATALEN_OFFSET + 1] = dataLen >> 8;
-
-    uart_send_package[UART_PROTCL_DATA_OFFSET] = fileNameLen;
-    uart_send_package[UART_PROTCL_DATA_OFFSET + 1] = fileLen & 0xff;
-    uart_send_package[UART_PROTCL_DATA_OFFSET + 2] = (fileLen >> 8) & 0xff;
-    uart_send_package[UART_PROTCL_DATA_OFFSET + 3] = (fileLen >> 16) & 0xff;
-    uart_send_package[UART_PROTCL_DATA_OFFSET + 4] = (fileLen >> 24) & 0xff;
-    memcpy(&uart_send_package[UART_PROTCL_DATA_OFFSET + 5], fileName, fileNameLen);
-
-    uart_send_package[dataLen + 4] = UART_PROTCL_TAIL;
-
-    uart_send_size = dataLen + 5;
-
-    return 0;
-}
-
-int package_file_fragment(uint8_t *dataField, uint32_t fragLen, int32_t fragment)
-{
-    int dataLen;
-    dataLen = fragLen + 4;
-    log_mkswifi("fragment:%d",fragment);
-    memset(uart_send_package, 0, sizeof(uart_send_package));
-    uart_send_package[UART_PROTCL_HEAD_OFFSET] = UART_PROTCL_HEAD;
-    uart_send_package[UART_PROTCL_TYPE_OFFSET] = UART_PROTCL_TYPE_FRAGMENT;
-    uart_send_package[UART_PROTCL_DATALEN_OFFSET] = dataLen & 0xff;
-    uart_send_package[UART_PROTCL_DATALEN_OFFSET + 1] = dataLen >> 8;
-
-    uart_send_package[UART_PROTCL_DATA_OFFSET] = fragment & 0xff;
-    uart_send_package[UART_PROTCL_DATA_OFFSET + 1] = (fragment >> 8) & 0xff;
-    uart_send_package[UART_PROTCL_DATA_OFFSET + 2] = (fragment >> 16) & 0xff;
-    uart_send_package[UART_PROTCL_DATA_OFFSET + 3] = (fragment >> 24) & 0xff;
-
-    memcpy(&uart_send_package[UART_PROTCL_DATA_OFFSET + 4], (const char *)dataField, fragLen);
-
-    uart_send_package[dataLen + 4] = UART_PROTCL_TAIL;
-
-    uart_send_size = 1024;
-    return 0;
-}
-
-
-
-
 void do_transfer()
 {
     static size_t readBytes;
@@ -580,7 +518,7 @@ void do_transfer()
                 file_fragment &= ~(1 << 31);
             }
 
-            package_file_fragment(blockBuf, readBytes, file_fragment);
+            serialcom.fileFragment(blockBuf, readBytes, file_fragment);
 
             digitalWrite(EspReqTransferPin, LOW);
 
@@ -594,7 +532,7 @@ void do_transfer()
             readBytes = 0;
             file_fragment |= (1 << 31); //the last fragment
 
-            package_file_fragment(blockBuf, readBytes, file_fragment);
+            serialcom.fileFragment(blockBuf, readBytes, file_fragment);
 
             digitalWrite(EspReqTransferPin, LOW);
 
@@ -824,76 +762,6 @@ static void net_msg_handle(uint8_t * msg, uint16_t msgLen)
         ESP.restart();
     }
 
-}
-
-static void scan_wifi_msg_handle()
-{
-    uint8_t valid_nums = 0;
-    uint32_t byte_offset = 1;
-    uint8_t node_lenth;
-    int8_t signal_rssi;
-    //clean memory
-    WiFi.scanDelete();
-    int n = WiFi.scanNetworks();
-    log_mkswifi("scan done");
-    if (n == 0) {
-        log_mkswifi("no networks found");
-        //to avoid to stay in APSTA mode
-        if(currentState == OperatingState::AccessPoint) {
-            WiFi.mode(WIFI_AP);
-        }
-        return;
-    } else {
-        log_mkswifi("%d networks found", n);
-        memset(uart_send_package, 0, sizeof(uart_send_package));
-        uart_send_package[UART_PROTCL_HEAD_OFFSET] = UART_PROTCL_HEAD;
-        uart_send_package[UART_PROTCL_TYPE_OFFSET] = UART_PROTCL_TYPE_HOT_PORT;
-        for (int i = 0; i < n; ++i) {
-            if(valid_nums > 15) {
-                break;
-            }
-            signal_rssi = (int8_t)WiFi.RSSI(i);
-            // Print SSID and RSSI for each network found
-            log_mkswifi("%d: %s (%d) %s",i + 1,WiFi.SSID(i).c_str(),  WiFi.RSSI(i),(WiFi.encryptionType(i) == ENC_TYPE_NONE)?" ":"*" );
-            node_lenth = (uint8_t)WiFi.SSID(i).length();
-            if(node_lenth > 32) {
-                log_mkswifi("Name too long, ignored" );
-                continue;
-            }
-            if(signal_rssi < -78) {
-                log_mkswifi("Signal too low, ignored" );
-                continue;
-            }
-
-            uart_send_package[UART_PROTCL_DATA_OFFSET + byte_offset] = node_lenth;
-            WiFi.SSID(i).toCharArray(&uart_send_package[UART_PROTCL_DATA_OFFSET + byte_offset + 1], node_lenth + 1, 0);
-            uart_send_package[UART_PROTCL_DATA_OFFSET + byte_offset + node_lenth + 1] = WiFi.RSSI(i);
-
-            valid_nums++;
-            byte_offset += node_lenth + 2;
-
-        }
-
-        uart_send_package[UART_PROTCL_DATA_OFFSET] = valid_nums;
-        uart_send_package[UART_PROTCL_DATA_OFFSET + byte_offset] = UART_PROTCL_TAIL;
-        uart_send_package[UART_PROTCL_DATALEN_OFFSET] = byte_offset & 0xff;
-        uart_send_package[UART_PROTCL_DATALEN_OFFSET + 1] = byte_offset >> 8;
-
-        uart_send_size = byte_offset + 5;
-
-        /*if(transfer_state == TRANSFER_IDLE)
-        {
-            transfer_state = TRANSFER_READY;
-            digitalWrite(EspReqTransferPin, LOW);
-        }*/
-
-    }
-    //clean memory
-    WiFi.scanDelete();
-    //to avoid to stay in APSTA mode
-    if(currentState == OperatingState::AccessPoint) {
-        WiFi.mode(WIFI_AP);
-    }
 }
 
 static void manual_ip_msg_handle(uint8_t * msg, uint16_t msgLen)
@@ -1190,7 +1058,7 @@ void esp_data_parser(char *cmdRxBuf, int len)
 
         case ESP_TYPE_SCAN_WIFI:
             log_mkswifi("ESP_TYPE_SCAN_WIFI");
-            scan_wifi_msg_handle();
+            serialcom.hotSpotFragment();
             break;
 
         case ESP_TYPE_MANUAL_IP:
@@ -1224,119 +1092,4 @@ void esp_data_parser(char *cmdRxBuf, int len)
 
     }
 }
-
-// Try to connect using the saved SSID and password, returning true if successful
-bool TryToConnect()
-{
-
-    char eeprom_valid[1] = {0};
-    uint8_t failcount = 0;
-    EEPROM.get(BAK_ADDRESS_WIFI_VALID, eeprom_valid);
-    if(eeprom_valid[0] == 0x0a) {
-        log_mkswifi("EEPROM is valid");
-        log_mkswifi("Read SSID/Password from EEPROM");
-        EEPROM.get(BAK_ADDRESS_WIFI_MODE, wifi_mode);
-        EEPROM.get(BAK_ADDRESS_WEB_HOST, webhostname);
-        log_mkswifi("Mode:%s, web hostname:%s", wifi_mode,webhostname);
-    } else {
-        log_mkswifi("EEPROM is not valid, reset it");
-        memset(wifi_mode, 0, sizeof(wifi_mode));
-        strcpy(wifi_mode, "wifi_mode_ap");
-        log_mkswifi("Mode:%s", wifi_mode);
-        NET_INF_UPLOAD_CYCLE = 1000;
-    }
-    if(strcmp(wifi_mode, "wifi_mode_ap") != 0) {
-        log_mkswifi("mode is NOT ap");
-        if(eeprom_valid[0] == 0x0a) {
-            log_mkswifi("EEPROM is valid");
-            log_mkswifi("Read SSID/Password from EEPROM");
-            EEPROM.get(BAK_ADDRESS_WIFI_SSID, ssid);
-            EEPROM.get(BAK_ADDRESS_WIFI_KEY, pass);
-            log_mkswifi("SSID:%s, pass:%s", ssid, pass);
-        } else {
-            log_mkswifi("EEPROM is not valid, reset it");
-            memset(ssid, 0, sizeof(ssid));
-            strcpy(ssid, "mks1");
-            memset(pass, 0, sizeof(pass));
-            strcpy(pass, "makerbase");
-            log_mkswifi("SSID:%s, pass:%s", ssid,pass);
-        }
-        currentState = OperatingState::Client;
-        log_mkswifi("Current state is client :%d", currentState);
-        serialcom.sendNetworkInfos();
-        log_mkswifi("Transfert state is: Ready");
-        transfer_state = TRANSFER_READY;
-        log_mkswifi("Wait 10s");
-        delay(1000);
-        log_mkswifi("Setup WiFi as STA");
-        WiFi.mode(WIFI_STA);
-        log_mkswifi("Disconnect from any AP");
-        WiFi.disconnect();
-        delay(1000);
-        log_mkswifi("Check if static IP");
-        EEPROM.get(BAK_ADDRESS_MANUAL_IP_FLAG, manual_valid);
-        if(manual_valid == 0xa) {
-            //uint32_t manual_ip, manual_subnet, manual_gateway, manual_dns;
-            EEPROM.get(BAK_ADDRESS_MANUAL_IP, ip_static);
-            EEPROM.get(BAK_ADDRESS_MANUAL_MASK, subnet_static);
-            EEPROM.get(BAK_ADDRESS_MANUAL_GATEWAY, gateway_static);
-            EEPROM.get(BAK_ADDRESS_MANUAL_DNS, dns_static);
-            log_mkswifi("Use Static IP");
-            WiFi.config(ip_static, gateway_static, subnet_static, dns_static, (uint32_t)0x00000000);
-        }
-        log_mkswifi("Setup WiFi as STA, SSID:%s, PWD:%s", ssid, pass);
-        WiFi.begin(ssid, pass);
-        log_mkswifi("Connecting");
-        while (WiFi.status() != WL_CONNECTED) {
-            if(get_printer_reply() > 0) {
-                log_mkswifi("Read incoming data");
-                esp_data_parser((char *)uart_rcv_package, uart_rcv_index);
-            }
-            uart_rcv_index = 0;
-            serialcom.sendNetworkInfos();
-            delay(500);
-            failcount++;
-            if (failcount > MAX_WIFI_FAIL) { // 1 min
-                delay(100);
-                log_mkswifi("Timeout");
-                return false;
-            }
-            log_mkswifi("Do transfer");
-            do_transfer();
-        };
-    } else {
-        log_mkswifi("mode is ap");
-        IPAddress apIP(192, 168, 4, 1);
-        if(eeprom_valid[0] == 0x0a) {
-            log_mkswifi("EEPROM is valid");
-            log_mkswifi("Read SSID/Password from EEPROM");
-            EEPROM.get(BAK_ADDRESS_WIFI_SSID, softApName);
-            EEPROM.get(BAK_ADDRESS_WIFI_KEY, softApKey);
-            log_mkswifi("SSID:%s, pass:%s", softApName,softApKey);
-        } else {
-            log_mkswifi("EEPROM is not valid, reset it");
-            String macStr= WiFi.macAddress();
-            macStr.replace(":", "");
-            strcat(softApName, macStr.substring(8).c_str());
-            memset(pass, 0, sizeof(pass));
-            log_mkswifi("SSID:%s, no password", softApName);
-        }
-        currentState = OperatingState::AccessPoint;
-        log_mkswifi("Current state is Access point :%d", currentState);
-
-        WiFi.mode(WIFI_AP);
-        WiFi.softAPConfig(apIP, apIP, IPAddress(255, 255, 255, 0));
-        if(strlen(softApKey) != 0) {
-            WiFi.softAP(softApName, softApKey);
-        } else {
-            WiFi.softAP(softApName);
-        }
-        log_mkswifi("Setup WiFi as AP, SSID:%s, PWD:%s", softApName, softApKey);
-    }
-    return true;
-}
-
-
-
-
 

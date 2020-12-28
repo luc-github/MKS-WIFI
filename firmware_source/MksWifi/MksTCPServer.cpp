@@ -238,12 +238,8 @@ void MksTCPServer::handle()
 
                                 if(gcodeM3.length() > 2)
                                 {
-                                    package_gcode(gcodeM3, true);
-                                    //Serial.write(uart_send_package, sizeof(uart_send_package));
-                                    //transfer_state = TRANSFER_READY;
-                                    //digitalWrite(EspReqTransferPin, LOW);
+                                    serialcom.gcodeFragment(gcodeM3, true);
                                     do_transfer();
-
                                     socket_busy_stamp = millis();
                                 }
 
