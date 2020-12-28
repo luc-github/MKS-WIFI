@@ -8,26 +8,48 @@
 #define FRAME_WAIT_TO_SEND_TIMEOUT  2000
 #define NET_FRAME_REFRESH_TIME  10000
 
+#define ESP_COMMUNICATION_BR  115200
+#define ESP_TRANSFER_BR  1958400
+
 extern OperatingState currentState;
+extern TRANS_STATE transfer_state;
 extern char moduleId[21];
 extern char softApName[32];
 extern char softApKey[64];
 extern char ssid[32];
 extern char pass[64];
 extern bool verification_flag;
+extern uint32_t ip_static;
+extern uint32_t subnet_static;
+extern uint32_t gateway_static;
+extern uint32_t dns_static;
 
 MksSerialCom serialcom;
 
-MksSerialCom::MksSerialCom() {}
-void MksSerialCom::begin() {}
+MksSerialCom::MksSerialCom()
+{
+    _frameSize=0;
+}
+void MksSerialCom::begin()
+{
+    Serial.begin(ESP_COMMUNICATION_BR);
+}
+
 void MksSerialCom::handle()
 {
-    static uint32_t networkFrameTimeout = millis();
-    //need to send periodically the network status
-    if ((millis() - networkFrameTimeout) > NET_FRAME_REFRESH_TIME) {
-        sendNetworkInfos();
-        networkFrameTimeout = millis();
+}
+
+bool MksSerialCom::transferFragment()
+{
+    bool res = false;
+    if (Serial.write(_frame, _frameSize) == _frameSize) {
+        log_mkswifi("Send frame Ok");
+        res = true;
+    } else {
+        log_mkswifi("Send frame failed");
     }
+    clearFrame();
+    return res;
 }
 
 void MksSerialCom::clearFrame()
@@ -36,12 +58,73 @@ void MksSerialCom::clearFrame()
     memset(_frame, 0, sizeof(_frame));
 }
 
-bool MksSerialCom::sendNetworkInfos()
+void MksSerialCom::communicationMode()
 {
-    if (canSendFrame()) {
-        log_mkswifi("Can send frame");
+    if(Serial.baudRate() != ESP_COMMUNICATION_BR) {
+        Serial.flush();
+        Serial.begin(ESP_COMMUNICATION_BR);
+    }
+}
+void MksSerialCom::transferMode()
+{
+    if(Serial.baudRate() != ESP_TRANSFER_BR) {
+        Serial.flush();
+        Serial.begin(ESP_TRANSFER_BR);
+    }
+}
+
+void MksSerialCom::StaticIPInfosFragment()
+{
+    static uint32_t staticFrameTimeout = millis();
+    if ((millis() - staticFrameTimeout) > NET_FRAME_REFRESH_TIME + 2) {
+        staticFrameTimeout = millis();
+
+        log_mkswifi("Can send Static frame");
         clearFrame();
-        uint frameSize;
+        _frame[UART_PROTCL_HEAD_OFFSET] = UART_PROTCL_HEAD;
+        _frame[UART_PROTCL_TYPE_OFFSET] = UART_PROTCL_TYPE_STATIC_IP;
+
+        _frame[UART_PROTCL_DATA_OFFSET] = ip_static & 0xff;
+        _frame[UART_PROTCL_DATA_OFFSET + 1] = (ip_static >> 8) & 0xff;
+        _frame[UART_PROTCL_DATA_OFFSET + 2] = (ip_static >> 16) & 0xff;
+        _frame[UART_PROTCL_DATA_OFFSET + 3] = (ip_static >> 24) & 0xff;
+
+        _frame[UART_PROTCL_DATA_OFFSET + 4] = subnet_static & 0xff;
+        _frame[UART_PROTCL_DATA_OFFSET + 5] = (subnet_static >> 8) & 0xff;
+        _frame[UART_PROTCL_DATA_OFFSET + 6] = (subnet_static >> 16) & 0xff;
+        _frame[UART_PROTCL_DATA_OFFSET + 7] = (subnet_static >> 24) & 0xff;
+
+        _frame[UART_PROTCL_DATA_OFFSET + 8] = gateway_static & 0xff;
+        _frame[UART_PROTCL_DATA_OFFSET + 9] = (gateway_static >> 8) & 0xff;
+        _frame[UART_PROTCL_DATA_OFFSET + 10] = (gateway_static >> 16) & 0xff;
+        _frame[UART_PROTCL_DATA_OFFSET + 11] = (gateway_static >> 24) & 0xff;
+
+        _frame[UART_PROTCL_DATA_OFFSET + 12] = dns_static & 0xff;
+        _frame[UART_PROTCL_DATA_OFFSET + 13] = (dns_static >> 8) & 0xff;
+        _frame[UART_PROTCL_DATA_OFFSET + 14] = (dns_static >> 16) & 0xff;
+        _frame[UART_PROTCL_DATA_OFFSET + 15] = (dns_static >> 24) & 0xff;
+
+        _frame[UART_PROTCL_DATALEN_OFFSET] = 16;
+        _frame[UART_PROTCL_DATALEN_OFFSET + 1] = 0;
+
+        _frame[UART_PROTCL_DATA_OFFSET + 16] = UART_PROTCL_TAIL;
+
+        _frameSize = UART_PROTCL_DATA_OFFSET + 17;
+
+
+
+    } else {
+        log_mkswifi("Not in timeout");
+    }
+}
+
+void MksSerialCom::NetworkInfosFragment(bool force)
+{
+    static uint32_t networkFrameTimeout = millis();
+    //need to send periodically the network status
+    if (((millis() - networkFrameTimeout) > NET_FRAME_REFRESH_TIME) || force) {
+        networkFrameTimeout = millis();
+        clearFrame();
         int dataLen;
         int wifi_name_len = 0;
         int wifi_key_len = 0;
@@ -151,14 +234,18 @@ bool MksSerialCom::sendNetworkInfos()
 
         _frame[dataLen + 4] = UART_PROTCL_TAIL;
 
-        frameSize = dataLen + 5;
-        if (Serial.write(_frame, frameSize) == frameSize) {
-            ;
-            return true;
-        } else {
-            log_mkswifi("Send frame failed");
-            return false;
-        }
+        _frameSize = dataLen + 5;
+    } else {
+        log_mkswifi("Not in timeout");
+    }
+}
+
+bool MksSerialCom::sendNetworkInfos()
+{
+    if (canSendFrame()) {
+        log_mkswifi("Can send Network frame");
+        NetworkInfosFragment(true);
+        return transferFragment();
     } else {
         log_mkswifi("Cannot send frame");
         return false;

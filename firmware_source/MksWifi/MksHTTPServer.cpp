@@ -34,6 +34,8 @@ const char WIFI_CONFIG_HTML[] PROGMEM = "<html><head><meta http-equiv='Content-T
                                         "</td></tr><tr><td colspan=2 align='right'> <input type='submit' value='config and reboot'></td></tr></table></form></div></body></html>";
 #endif
 
+#define HTTP_PORT   80
+
 MksHTTPServer WebServer;
 
 UPDATE_RESULT MksHTTPServer::_update_result= UPDATE_NOT_DONE;
@@ -51,6 +53,7 @@ void MksHTTPServer::handle()
 
 void MksHTTPServer::begin()
 {
+    log_mkswifi("Start HTTP server");
     _server.onNotFound(handleNotFound);
     //upload on root are ignored
     _server.on("/", HTTP_ANY, handleRoot);
@@ -61,7 +64,7 @@ void MksHTTPServer::begin()
     _server.on("/update_cfg", HTTP_GET, handleCfg);
     //upload
     _server.on("/upload", HTTP_ANY, handleUpload, handleFileUpload);
-    _server.begin(80);
+    _server.begin(HTTP_PORT);
 }
 
 void MksHTTPServer::handleRoot()
@@ -360,11 +363,7 @@ void handleUpload()
             server.send(200, FPSTR(STR_MIME_APPLICATION_JSON), FPSTR(STR_JSON_ERR_0));
         }  else
         {
-            if(Serial.baudRate() != 115200)
-            {
-                Serial.flush();
-                Serial.begin(115200);
-              }
+            serialcom.communicationMode();
             transfer_file_flag = false;
             rcv_end_flag = false;
             transfer_state = TRANSFER_IDLE;

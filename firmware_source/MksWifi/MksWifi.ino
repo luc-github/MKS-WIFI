@@ -35,7 +35,10 @@ char ssid[32] = {0};
 char pass[64] = {0};
 char webhostname[64]= {0};
 uint8_t manual_valid = 0xff; //whether it use static ip
-uint32_t ip_static, subnet_static, gateway_static, dns_static;
+uint32_t ip_static;
+uint32_t subnet_static;
+uint32_t gateway_static;
+uint32_t dns_static;
 bool verification_flag = false;
 
 
@@ -64,6 +67,9 @@ boolean rcv_end_flag = false;
 uint8_t dbgStr[100] ;
 uint NET_INF_UPLOAD_CYCLE = 10000;
 
+
+uint8_t blockBuf[FILE_BLOCK_SIZE] = {0};
+
 //Struct
 struct QUEUE {
     char buf[QUEUE_MAX_NUM][100];
@@ -73,15 +79,7 @@ struct QUEUE {
 
 struct QUEUE cmd_queue;
 
-//Enum
-typedef enum {
-    TRANSFER_IDLE,
-    TRANSFER_BEGIN,
-    TRANSFER_GET_FILE,
-    TRANSFER_READY,
-    TRANSFER_FRAGMENT
 
-} TRANS_STATE;
 
 TRANS_STATE transfer_state = TRANSFER_IDLE;
 
@@ -94,6 +92,8 @@ void esp_data_parser(char *cmdRxBuf, int len);
 void handleGcode();
 void StartAccessPoint();
 bool TryToConnect();
+
+
 
 
 //Class
@@ -225,31 +225,17 @@ int pop_queue(struct QUEUE *h_queue, char *data_for_pop, uint data_len)
 
     return 0;
 }
-bool smartConfig()
+
+void StartAccessPoint()
 {
-    WiFi.mode(WIFI_STA);
-    WiFi.beginSmartConfig();
-    int now = millis();
-    while (1) {
-        if(get_printer_reply() > 0) {
-            esp_data_parser((char *)uart_rcv_package, uart_rcv_index);
-        }
-        uart_rcv_index = 0;
-
-        delay(1000);
-        if (WiFi.smartConfigDone()) {
-
-
-
-            WiFi.stopSmartConfig();
-            return true;;
-        }
-
-        if(millis() - now > 120000) { // 2min
-            WiFi.stopSmartConfig();
-            return false;
-        }
-    }
+    delay(5000);
+    IPAddress apIP(192, 168, 4, 1);
+    WiFi.mode(WIFI_AP);
+    WiFi.softAPConfig(apIP, apIP, IPAddress(255, 255, 255, 0));
+    String macStr= WiFi.macAddress();
+    macStr.replace(":", "");
+    strcat(softApName, macStr.substring(8).c_str());
+    WiFi.softAP(softApName);
 }
 
 void verification()
@@ -272,29 +258,17 @@ void var_init()
     strcpy( moduleId, "12345");
 }
 
-void net_env_prepare()
-{
-    WebServer.begin();
-    TcpServer.begin();
-    NodeMonitor.begin();
-}
-
-
-
 void setup()
 {
     var_init();
-    Serial.begin(115200);
-    delay(20);
+    serialcom.begin();
     EEPROM.begin(EEPROM_SIZE);
     LittleFS.begin();
     verification();
-    String macStr= WiFi.macAddress();
     log_mkswifi("Setup Pins");
     pinMode(McuTfrReadyPin, INPUT);
     pinMode(EspReqTransferPin, OUTPUT);
     digitalWrite(EspReqTransferPin, HIGH);
-
     bool success = TryToConnect();
     if (success) {
         log_mkswifi("Success");
@@ -304,20 +278,16 @@ void setup()
         currentState = OperatingState::AccessPoint;
     }
     serialcom.sendNetworkInfos();
-
-    net_env_prepare();
+    log_mkswifi("Start servers");
+    WebServer.begin();
+    TcpServer.begin();
+    NodeMonitor.begin();
     delay(500);
-}
-
-void net_print(const uint8_t *sbuf, uint32_t len)
-{
-    TcpServer.write(sbuf,  len);
 }
 
 void query_printer_inf()
 {
     static int last_query_temp_time = 0;
-    static uint32_t lastStaticIpInfTick = 0;
 
     if((!transfer_file_flag) &&  (transfer_state == TRANSFER_IDLE)) {
 
@@ -337,13 +307,9 @@ void query_printer_inf()
         } else {
             if(millis() - last_query_temp_time > 5000) { //every 5 seconds
 
-                if(GET_VERSION_OK)
-                    //package_gcode("M27\nM997\n");
-                {
+                if(GET_VERSION_OK) {
                     package_gcode("M991\nM27\nM997\n", false);
-                } else
-                    //package_gcode("M27\nM997\nM115\n");
-                {
+                } else {
                     package_gcode("M991\nM27\nM997\nM115\n", false);
                 }
 
@@ -356,20 +322,12 @@ void query_printer_inf()
         }
     }
     if((!transfer_file_flag) &&  (transfer_state == TRANSFER_IDLE)) {
-
         //beat package
-        serialcom.handle();
-
+        serialcom.NetworkInfosFragment();
     }
     if((manual_valid == 0xa) && (!transfer_file_flag) &&  (transfer_state == TRANSFER_IDLE)) {
-
         //beat package
-        if(millis() - lastStaticIpInfTick > (NET_INF_UPLOAD_CYCLE + 2)) {
-            package_static_ip_info();
-            /*transfer_state = TRANSFER_READY;
-            digitalWrite(EspReqTransferPin, LOW);*/
-            lastStaticIpInfTick = millis();
-        }
+        serialcom.StaticIPInfosFragment();
 
     }
 
@@ -428,53 +386,12 @@ void loop()
 }
 
 
-
-int package_static_ip_info()
-{
-
-    memset(uart_send_package, 0, sizeof(uart_send_package));
-    uart_send_package[UART_PROTCL_HEAD_OFFSET] = UART_PROTCL_HEAD;
-    uart_send_package[UART_PROTCL_TYPE_OFFSET] = UART_PROTCL_TYPE_STATIC_IP;
-
-    uart_send_package[UART_PROTCL_DATA_OFFSET] = ip_static & 0xff;
-    uart_send_package[UART_PROTCL_DATA_OFFSET + 1] = (ip_static >> 8) & 0xff;
-    uart_send_package[UART_PROTCL_DATA_OFFSET + 2] = (ip_static >> 16) & 0xff;
-    uart_send_package[UART_PROTCL_DATA_OFFSET + 3] = (ip_static >> 24) & 0xff;
-
-    uart_send_package[UART_PROTCL_DATA_OFFSET + 4] = subnet_static & 0xff;
-    uart_send_package[UART_PROTCL_DATA_OFFSET + 5] = (subnet_static >> 8) & 0xff;
-    uart_send_package[UART_PROTCL_DATA_OFFSET + 6] = (subnet_static >> 16) & 0xff;
-    uart_send_package[UART_PROTCL_DATA_OFFSET + 7] = (subnet_static >> 24) & 0xff;
-
-    uart_send_package[UART_PROTCL_DATA_OFFSET + 8] = gateway_static & 0xff;
-    uart_send_package[UART_PROTCL_DATA_OFFSET + 9] = (gateway_static >> 8) & 0xff;
-    uart_send_package[UART_PROTCL_DATA_OFFSET + 10] = (gateway_static >> 16) & 0xff;
-    uart_send_package[UART_PROTCL_DATA_OFFSET + 11] = (gateway_static >> 24) & 0xff;
-
-    uart_send_package[UART_PROTCL_DATA_OFFSET + 12] = dns_static & 0xff;
-    uart_send_package[UART_PROTCL_DATA_OFFSET + 13] = (dns_static >> 8) & 0xff;
-    uart_send_package[UART_PROTCL_DATA_OFFSET + 14] = (dns_static >> 16) & 0xff;
-    uart_send_package[UART_PROTCL_DATA_OFFSET + 15] = (dns_static >> 24) & 0xff;
-
-    uart_send_package[UART_PROTCL_DATALEN_OFFSET] = 16;
-    uart_send_package[UART_PROTCL_DATALEN_OFFSET + 1] = 0;
-
-    uart_send_package[UART_PROTCL_DATA_OFFSET + 16] = UART_PROTCL_TAIL;
-
-    uart_send_size = UART_PROTCL_DATA_OFFSET + 17;
-
-    return uart_send_size;
-}
-
-
-
 int package_gcode(const char *dataField, boolean important)
 {
     uint32_t buffer_offset;
     uint dataLen = strlen((const char *)dataField);
 
     if(important) {
-
         buffer_offset = uart_send_length_important;
     } else {
         buffer_offset = 0;
@@ -520,10 +437,6 @@ int package_gcode(const char *dataField, boolean important)
     return 0;
 }
 
-int package_gcode(String gcodeStr, boolean important)
-{
-    return package_gcode(gcodeStr.c_str(), important);
-}
 int package_file_first(File *fileHandle, char *fileName)
 {
     int fileLen;
@@ -637,13 +550,13 @@ int package_file_fragment(uint8_t *dataField, uint32_t fragLen, int32_t fragment
     return 0;
 }
 
-unsigned long startTick = 0;
-size_t readBytes;
-uint8_t blockBuf[FILE_BLOCK_SIZE] = {0};
+
 
 
 void do_transfer()
 {
+    static size_t readBytes;
+
     switch(transfer_state) {
     case TRANSFER_IDLE:
         if((uart_send_length_important > 0) || (uart_send_size > 0)) {
@@ -658,12 +571,7 @@ void do_transfer()
         break;
 
     case TRANSFER_GET_FILE:
-        if(Serial.baudRate() != 1958400) {
-            Serial.flush();
-            Serial.updateBaudRate(1958400);
-        }
-
-
+        serialcom.transferMode();
         readBytes = gFileFifo.pop((char *)blockBuf, FILE_BLOCK_SIZE);
         if(readBytes > 0) {
             if(rcv_end_flag && (readBytes < FILE_BLOCK_SIZE)) {
@@ -727,10 +635,7 @@ void do_transfer()
         } else {
             if(rcv_end_flag && (readBytes < FILE_BLOCK_SIZE)) {
 
-                if(Serial.baudRate() != 115200) {
-                    Serial.flush();
-                    Serial.updateBaudRate(115200);
-                }
+                serialcom.communicationMode();
                 transfer_file_flag = false;
                 rcv_end_flag = false;
                 transfer_state = TRANSFER_IDLE;
@@ -751,7 +656,7 @@ void do_transfer()
     }
     if(transfer_file_flag) {
         if((gFileFifo.left() >= TCP_FRAG_LEN) && (transfer_frags >= TCP_FRAG_LEN)) {
-            net_print((const uint8_t *) "ok\n", strlen((const char *)"ok\n"));
+            TcpServer.write((const uint8_t *) "ok\n", strlen((const char *)"ok\n"));
             transfer_frags -= TCP_FRAG_LEN;
         }
     }
@@ -1118,7 +1023,7 @@ static void transfer_msg_handle(uint8_t * msg, uint16_t msgLen)
                 sprintf((char *)dbgStr, "T:%d /%d B:%d /%d T0:%d /%d T1:%d /%d @:0 B@:0\r\n",
                         (int)gPrinterInf.curSprayerTemp[0], (int)gPrinterInf.desireSprayerTemp[0], (int)gPrinterInf.curBedTemp, (int)gPrinterInf.desireBedTemp,
                         (int)gPrinterInf.curSprayerTemp[0], (int)gPrinterInf.desireSprayerTemp[0], (int)gPrinterInf.curSprayerTemp[1], (int)gPrinterInf.desireSprayerTemp[1]);
-                net_print((const uint8_t*)dbgStr, strlen((const char *)dbgStr));
+                TcpServer.write((const uint8_t*)dbgStr, strlen((const char *)dbgStr));
 
             }
             continue;
@@ -1128,7 +1033,7 @@ static void transfer_msg_handle(uint8_t * msg, uint16_t msgLen)
         } else if((cmd_line[0] == 'M') && (cmd_line[1] == '2') && (cmd_line[2] == '7')) {
             continue;
         } else {
-            net_print((const uint8_t*)cmd_line, strlen((const char *)cmd_line));
+            TcpServer.write((const uint8_t*)cmd_line, strlen((const char *)cmd_line));
         }
 
 
@@ -1320,15 +1225,12 @@ void esp_data_parser(char *cmdRxBuf, int len)
     }
 }
 
-
-
 // Try to connect using the saved SSID and password, returning true if successful
 bool TryToConnect()
 {
 
     char eeprom_valid[1] = {0};
     uint8_t failcount = 0;
-
     EEPROM.get(BAK_ADDRESS_WIFI_VALID, eeprom_valid);
     if(eeprom_valid[0] == 0x0a) {
         log_mkswifi("EEPROM is valid");
@@ -1343,9 +1245,6 @@ bool TryToConnect()
         log_mkswifi("Mode:%s", wifi_mode);
         NET_INF_UPLOAD_CYCLE = 1000;
     }
-
-
-
     if(strcmp(wifi_mode, "wifi_mode_ap") != 0) {
         log_mkswifi("mode is NOT ap");
         if(eeprom_valid[0] == 0x0a) {
@@ -1362,8 +1261,6 @@ bool TryToConnect()
             strcpy(pass, "makerbase");
             log_mkswifi("SSID:%s, pass:%s", ssid,pass);
         }
-
-
         currentState = OperatingState::Client;
         log_mkswifi("Current state is client :%d", currentState);
         serialcom.sendNetworkInfos();
@@ -1371,17 +1268,13 @@ bool TryToConnect()
         transfer_state = TRANSFER_READY;
         log_mkswifi("Wait 10s");
         delay(1000);
-
         log_mkswifi("Setup WiFi as STA");
         WiFi.mode(WIFI_STA);
         log_mkswifi("Disconnect from any AP");
         WiFi.disconnect();
-
         delay(1000);
-
         log_mkswifi("Check if static IP");
         EEPROM.get(BAK_ADDRESS_MANUAL_IP_FLAG, manual_valid);
-
         if(manual_valid == 0xa) {
             //uint32_t manual_ip, manual_subnet, manual_gateway, manual_dns;
             EEPROM.get(BAK_ADDRESS_MANUAL_IP, ip_static);
@@ -1391,10 +1284,8 @@ bool TryToConnect()
             log_mkswifi("Use Static IP");
             WiFi.config(ip_static, gateway_static, subnet_static, dns_static, (uint32_t)0x00000000);
         }
-
         log_mkswifi("Setup WiFi as STA, SSID:%s, PWD:%s", ssid, pass);
         WiFi.begin(ssid, pass);
-
         log_mkswifi("Connecting");
         while (WiFi.status() != WL_CONNECTED) {
             if(get_printer_reply() > 0) {
@@ -1412,7 +1303,6 @@ bool TryToConnect()
             }
             log_mkswifi("Do transfer");
             do_transfer();
-
         };
     } else {
         log_mkswifi("mode is ap");
@@ -1446,21 +1336,7 @@ bool TryToConnect()
     return true;
 }
 
-char hidden_ssid[32] = {0};
 
-
-
-void StartAccessPoint()
-{
-    delay(5000);
-    IPAddress apIP(192, 168, 4, 1);
-    WiFi.mode(WIFI_AP);
-    WiFi.softAPConfig(apIP, apIP, IPAddress(255, 255, 255, 0));
-    String macStr= WiFi.macAddress();
-    macStr.replace(":", "");
-    strcat(softApName, macStr.substring(8).c_str());
-    WiFi.softAP(softApName);
-}
 
 
 

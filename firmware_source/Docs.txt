@@ -9,3 +9,5 @@ Handlers port 80
 /update_cfg (GET)
 
 TCP server port 8080
+
+Node_monitor port 8989

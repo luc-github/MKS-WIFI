@@ -22,4 +22,12 @@ typedef enum  {
     AccessPoint = 2
 } OperatingState;
 
+typedef enum {
+    TRANSFER_IDLE,
+    TRANSFER_BEGIN,
+    TRANSFER_GET_FILE,
+    TRANSFER_READY,
+    TRANSFER_FRAGMENT
+
+} TRANS_STATE;
 

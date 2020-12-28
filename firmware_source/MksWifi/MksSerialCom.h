@@ -24,10 +24,16 @@ public:
     void begin();
     void handle();
     bool sendNetworkInfos();
+    void NetworkInfosFragment(bool force = false);
+    void StaticIPInfosFragment();
+    void communicationMode();
+    void transferMode();
+    bool transferFragment();
 private:
     bool canSendFrame();
     void clearFrame();
     char _frame[UART_FRAME_SIZE];
+    uint16_t _frameSize;
 
 };
 

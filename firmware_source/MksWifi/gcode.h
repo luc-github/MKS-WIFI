@@ -45,7 +45,6 @@ extern "C" {
 #endif
 
 extern void paser_cmd(uint8_t *cmdRxBuf);
-extern void net_print(const uint8_t *sbuf, uint32_t len);
 
 #ifdef __cplusplus
 }

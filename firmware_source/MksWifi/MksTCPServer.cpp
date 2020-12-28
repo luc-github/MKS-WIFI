@@ -10,6 +10,7 @@ MksTCPServer::MksTCPServer():_server(TCP_SERVER_PORT) {}
 
 void MksTCPServer::begin()
 {
+    log_mkswifi("Start TCP server");
     _server.begin();
 }
 
@@ -29,6 +30,7 @@ uint32_t  MksTCPServer::write(const uint8_t *sbuf, uint32_t len)
 void MksTCPServer::handle()
 {
     if (_server.hasClient()) {
+        log_mkswifi("New client");
         //find free/disconnected spot
         if(_currentClient.connected()) {
             _currentClient.stop();
@@ -36,6 +38,7 @@ void MksTCPServer::handle()
         _currentClient = _server.available();
 
         if (_server.hasClient()) {
+            log_mkswifi("Reject client");
             //no free/disconnected spot so reject
             WiFiClient serverClient = _server.available();
             serverClient.stop();
@@ -149,7 +152,7 @@ void MksTCPServer::handle()
 
                                                 if(gcode.startsWith("M998") && (M3_TYPE == ROBIN))
                                                 {
-                                                    net_print((const uint8_t *) "ok\r\n", strlen((const char *)"ok\r\n"));
+                                                    write((const uint8_t *) "ok\r\n", strlen((const char *)"ok\r\n"));
                                                 }
                                                 else if(gcode.startsWith("M997"))
                                                 {
@@ -217,9 +220,9 @@ void MksTCPServer::handle()
                                     }
                                     if(strlen((const char *)dbgStr) > 0)
                                     {
-                                        net_print((const uint8_t *) "ok\r\n", strlen((const char *)"ok\r\n"));
+                                        write((const uint8_t *) "ok\r\n", strlen((const char *)"ok\r\n"));
 
-                                        net_print((const uint8_t *) dbgStr, strlen((const char *)dbgStr));
+                                        write((const uint8_t *) dbgStr, strlen((const char *)dbgStr));
                                         memset(dbgStr, 0, sizeof(dbgStr));
 
                                     }
