@@ -9,6 +9,7 @@
 #include "MksTCPServer.h"
 #include "MksSerialCom.h"
 #include "MksNodeMonitor.h"
+#include "MksFiFoFile.h"
 #include "gcode.h"
 
 //define
@@ -16,9 +17,6 @@
 #define QUEUE_MAX_NUM    10
 
 #define TCP_FRAG_LEN    1400
-
-#define FILE_FIFO_SIZE  (4096)
-#define BUF_INC_POINTER(p)  ((p + 1 == FILE_FIFO_SIZE) ? 0:(p + 1))
 
 #define FILE_BLOCK_SIZE (1024 - 5 - 4)
 char cmd_fifo[100] = {0};
@@ -89,82 +87,6 @@ void handleGcode();
 void StartAccessPoint();
 bool TryToConnect();
 
-
-
-
-//Class
-class FILE_FIFO
-{
-public:
-    int push(char *buf, int len)
-    {
-        int i = 0;
-        while(i < len ) {
-            if(rP != BUF_INC_POINTER(wP)) {
-                fifo[wP] = *(buf + i) ;
-
-                wP = BUF_INC_POINTER(wP);
-
-                i++;
-            } else {
-                break;
-            }
-
-        }
-        return i;
-    }
-
-    int pop(char * buf, int len)
-    {
-        int i = 0;
-
-        while(i < len) {
-            if(rP != wP) {
-                buf[i] = fifo[rP];
-                rP= BUF_INC_POINTER(rP);
-                i++;
-            } else {
-                break;
-            }
-        }
-        return i;
-
-    }
-
-    void reset()
-    {
-        wP = 0;
-        rP = 0;
-        memset(fifo, 0, FILE_FIFO_SIZE);
-    }
-
-    uint32_t left()
-    {
-        if(rP >  wP) {
-            return rP - wP - 1;
-        } else {
-            return FILE_FIFO_SIZE + rP - wP - 1;
-        }
-
-    }
-
-    boolean is_empty()
-    {
-        if(rP == wP) {
-            return true;
-        } else {
-            return false;
-        }
-    }
-
-private:
-    char fifo[FILE_FIFO_SIZE];
-    uint32_t wP;
-    uint32_t rP;
-
-};
-
-class FILE_FIFO gFileFifo;
 
 //Functions definition
 void init_queue(struct QUEUE *h_queue)
